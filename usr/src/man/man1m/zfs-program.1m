@@ -350,6 +350,18 @@ They are executed in "syncing context".
 .Pp
 The available sync submodule functions are as follows:
 .Bl -tag -width "xx"
+.It Em zfs.sync.change_key(dataset, key)
+Changes the encryption key used to access a dataset.
+.Pp
+dataset (string)
+.Bd -ragged -compact -offset "xxxx"
+The dataset whose key is being changed.
+.Ed
+.Pp
+key (string)
+.Bd -ragged -compact -offset "xxxx"
+The new key as a raw binary string.
+.Ed
 .It Em zfs.sync.destroy(dataset, [defer=true|false])
 Destroy the given dataset.
 Returns 0 on successful destroy, or a nonzero error code if the dataset could
@@ -435,6 +447,7 @@ would successfully destroy the dataset.
 .Pp
 The available zfs.check functions are:
 .Bl -tag -width "xx"
+.It Em zfs.check.change_key(dataset, key)
 .It Em zfs.check.destroy(dataset, [defer=true|false])
 .It Em zfs.check.promote(dataset)
 .It Em zfs.check.rollback(filesystem)

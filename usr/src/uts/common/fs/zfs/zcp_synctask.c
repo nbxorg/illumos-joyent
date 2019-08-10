@@ -22,6 +22,7 @@
 #include "lauxlib.h"
 
 #include <sys/zcp.h>
+#include <sys/dsl_crypt.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_pool.h>
 #include <sys/dsl_prop.h>
@@ -330,6 +331,83 @@ zcp_synctask_set_prop(lua_State *state, boolean_t sync, nvlist_t *err_details)
 	zcp_deregister_cleanup(state, zch);
 	fnvlist_free(dpsa.dpsa_props);
 
+	return (err);
+}
+
+static int zcp_synctask_change_key(lua_State *, boolean_t, nvlist_t *);
+static zcp_synctask_info_t zcp_synctask_change_key_info = {
+	.name = "change_key",
+	.func = zcp_synctask_change_key,
+	.pargs = {
+		{ .za_name = "dataset", .za_lua_type = LUA_TSTRING },
+		{ .za_name = "key", .za_lua_type = LUA_TSTRING },
+		{ NULL, 0 },
+	},
+	.kwargs = {
+		{ NULL, 0 }
+	},
+	.space_check = ZFS_SPACE_CHECK_RESERVED,
+	/*
+	 * This is the same value that is used when zfs change-key is run.
+	 * See spa_keystore_change_key() in dsl_crypt.c
+	 */
+	.blocks_modified = 15
+};
+
+static void
+zcp_synctask_change_key_cleanup(void *arg)
+{
+	spa_keystore_change_key_args_t *skcka = arg;
+
+	dsl_crypto_params_free(skcka->skcka_cp, B_TRUE);
+}
+
+static int
+zcp_synctask_change_key(lua_State *state, boolean_t sync, nvlist_t *err_details)
+{
+	int err;
+	spa_keystore_change_key_args_t skcka = { 0 };
+	dsl_crypto_params_t *dcp = NULL;
+	nvlist_t *props = NULL;
+	nvlist_t *hidden_args = NULL;
+	const char *dsname;
+	const char *key;
+	size_t keylen;
+
+	dsname = lua_tostring(state, 1);
+	/*
+	 * The lua string is the raw key, which could contain NUL within it.
+	 * Use lua_tolstring() instead of lua_tostring() to obtain the length.
+	 */
+	key = lua_tolstring(state, 2, &keylen);
+
+	props = fnvlist_alloc();
+	hidden_args = fnvlist_alloc();
+	fnvlist_add_uint64(props, zfs_prop_to_name(ZFS_PROP_KEYFORMAT),
+	    ZFS_KEYFORMAT_RAW);
+	fnvlist_add_uint8_array(hidden_args, "wkeydata", (uint8_t *)key,
+	    (uint_t)keylen);
+	err = dsl_crypto_params_create_nvlist(DCP_CMD_NEW_KEY, props,
+	    hidden_args, &dcp);
+	fnvlist_free(props);
+	fnvlist_free(hidden_args);
+
+	if (err != 0)
+		goto done;
+
+	skcka.skcka_dsname = dsname;
+	skcka.skcka_cp = dcp;
+
+	zcp_cleanup_handler_t *zch = zcp_register_cleanup(state,
+	    (zcp_cleanup_t *)&zcp_synctask_change_key_cleanup, &skcka);
+
+	err = zcp_sync_task(state, spa_keystore_change_key_check,
+	    spa_keystore_change_key_sync, &skcka, sync, dsname);
+
+	zcp_deregister_cleanup(state, zch);
+
+done:
+	dsl_crypto_params_free(dcp, (err != 0 || !sync) ? B_TRUE : B_FALSE);
 	return (err);
 }
 

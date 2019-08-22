@@ -22,7 +22,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012, 2017 by Delphix. All rights reserved.
  * Copyright (c) 2013 Martin Matuska. All rights reserved.
- * Copyright (c) 2014 Joyent, Inc. All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright 2015 Nexenta Systems, Inc. All rights reserved.
  */
@@ -602,7 +602,7 @@ dsl_dir_init_fs_ss_count(dsl_dir_t *dd, dmu_tx_t *tx)
 	    sizeof (my_ss_cnt), 1, &my_ss_cnt, tx));
 }
 
-static int
+int
 dsl_dir_actv_fs_ss_limit_check(void *arg, dmu_tx_t *tx)
 {
 	char *ddname = (char *)arg;
@@ -633,7 +633,7 @@ dsl_dir_actv_fs_ss_limit_check(void *arg, dmu_tx_t *tx)
 	return (0);
 }
 
-static void
+void
 dsl_dir_actv_fs_ss_limit_sync(void *arg, dmu_tx_t *tx)
 {
 	char *ddname = (char *)arg;
@@ -1574,13 +1574,7 @@ dsl_dir_transfer_space(dsl_dir_t *dd, int64_t delta,
 	mutex_exit(&dd->dd_lock);
 }
 
-typedef struct dsl_dir_set_qr_arg {
-	const char *ddsqra_name;
-	zprop_source_t ddsqra_source;
-	uint64_t ddsqra_value;
-} dsl_dir_set_qr_arg_t;
-
-static int
+int
 dsl_dir_set_quota_check(void *arg, dmu_tx_t *tx)
 {
 	dsl_dir_set_qr_arg_t *ddsqra = arg;
@@ -1623,7 +1617,7 @@ dsl_dir_set_quota_check(void *arg, dmu_tx_t *tx)
 	return (error);
 }
 
-static void
+void
 dsl_dir_set_quota_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_dir_set_qr_arg_t *ddsqra = arg;
@@ -1747,7 +1741,7 @@ dsl_dir_set_reservation_sync_impl(dsl_dir_t *dd, uint64_t value, dmu_tx_t *tx)
 }
 
 
-static void
+void
 dsl_dir_set_reservation_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_dir_set_qr_arg_t *ddsqra = arg;

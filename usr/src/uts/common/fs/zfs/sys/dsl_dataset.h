@@ -21,7 +21,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2017 by Delphix. All rights reserved.
- * Copyright (c) 2013, Joyent, Inc. All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  * Copyright (c) 2013 Steven Hartland. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright (c) 2014 Integros [integros.com]
@@ -415,8 +415,12 @@ int dsl_dsobj_to_dsname(char *pname, uint64_t obj, char *buf);
 int dsl_dataset_check_quota(dsl_dataset_t *ds, boolean_t check_quota,
     uint64_t asize, uint64_t inflight, uint64_t *used,
     uint64_t *ref_rsrv);
+int dsl_dataset_set_refquota_check(void *arg, dmu_tx_t *tx);
+void dsl_dataset_set_refquota_sync(void *arg, dmu_tx_t *tx);
 int dsl_dataset_set_refquota(const char *dsname, zprop_source_t source,
     uint64_t quota);
+int dsl_dataset_set_refreservation_check(void *arg, dmu_tx_t *tx);
+void dsl_dataset_set_refreservation_sync(void *arg, dmu_tx_t *tx);
 int dsl_dataset_set_refreservation(const char *dsname, zprop_source_t source,
     uint64_t reservation);
 

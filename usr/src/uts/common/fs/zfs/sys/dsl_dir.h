@@ -21,7 +21,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012, 2017 by Delphix. All rights reserved.
- * Copyright (c) 2014, Joyent, Inc. All rights reserved.
+ * Copyright 2019 Joyent, Inc. All rights reserved.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  */
 
@@ -119,6 +119,12 @@ struct dsl_dir {
 	char dd_myname[ZFS_MAX_DATASET_NAME_LEN];
 };
 
+typedef struct dsl_dir_set_qr_arg {
+	const char *ddsqra_name;
+	zprop_source_t ddsqra_source;
+	uint64_t ddsqra_value;
+} dsl_dir_set_qr_arg_t;
+
 inline dsl_dir_phys_t *
 dsl_dir_phys(dsl_dir_t *dd)
 {
@@ -166,8 +172,14 @@ void dsl_dir_transfer_space(dsl_dir_t *dd, int64_t delta,
     dd_used_t oldtype, dd_used_t newtype, dmu_tx_t *tx);
 int dsl_dir_set_quota(const char *ddname, zprop_source_t source,
     uint64_t quota);
+int dsl_dir_set_quota_check(void *arg, dmu_tx_t *tx);
+void dsl_dir_set_quota_sync(void *arg, dmu_tx_t *tx);
 int dsl_dir_set_reservation(const char *ddname, zprop_source_t source,
     uint64_t reservation);
+int dsl_dir_set_reservation_check(void *arg, dmu_tx_t *tx);
+void dsl_dir_set_reservation_sync(void *arg, dmu_tx_t *tx);
+int dsl_dir_actv_fs_ss_limit_check(void *arg, dmu_tx_t *tx);
+void dsl_dir_actv_fs_ss_limit_sync(void *arg, dmu_tx_t *tx);
 int dsl_dir_activate_fs_ss_limit(const char *);
 int dsl_fs_ss_limit_check(dsl_dir_t *, uint64_t, zfs_prop_t, dsl_dir_t *,
     cred_t *);

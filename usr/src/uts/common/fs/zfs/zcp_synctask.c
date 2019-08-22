@@ -22,6 +22,7 @@
 #include "lauxlib.h"
 
 #include <sys/zcp.h>
+#include <sys/zcp_set.h>
 #include <sys/dsl_crypt.h>
 #include <sys/dsl_dir.h>
 #include <sys/dsl_pool.h>
@@ -277,21 +278,13 @@ zcp_synctask_snapshot(lua_State *state, boolean_t sync, nvlist_t *err_details)
 	return (err);
 }
 
-static int zcp_synctask_set_prop(lua_State *, boolean_t, nvlist_t *);
+static int zcp_synctask_set_prop(lua_State *, boolean_t, nvlist_t *err_details);
 static zcp_synctask_info_t zcp_synctask_set_prop_info = {
 	.name = "set_prop",
 	.func = zcp_synctask_set_prop,
+	.space_check = ZFS_SPACE_CHECK_RESERVED,
+	.blocks_modified = 2,	/* 2 * numprops  */
 	.pargs = {
-		/*
-		 * While zfs(1) does 'zfs set prop=value... dataset,
-		 * here we do dataset as the first argument.  The other
-		 * lua zfs.sync commands follow this format, so we choose
-		 * to be consistent with them.
-		 *
-		 * XXX: How to handle non-string properties? Should we
-		 * allow a table to specify a group of properties?
-		 * Should that be a separate command?
-		 */
 		{ .za_name = "dataset", .za_lua_type = LUA_TSTRING },
 		{ .za_name = "property", .za_lua_type = LUA_TSTRING },
 		{ .za_name = "value", .za_lua_type = LUA_TSTRING },
@@ -300,36 +293,25 @@ static zcp_synctask_info_t zcp_synctask_set_prop_info = {
 	.kwargs = {
 		{ NULL, 0 }
 	},
-	/*
-	 * This follows the same settings used by dsl_props_set() in
-	 * dsl_prop.c
-	 */
-	.space_check = ZFS_SPACE_CHECK_RESERVED,
-	.blocks_modified = 2	/* 2 * numprops  */
 };
 
 static int
 zcp_synctask_set_prop(lua_State *state, boolean_t sync, nvlist_t *err_details)
 {
 	int err;
-	dsl_props_set_arg_t dpsa = { 0 };
+	zcp_set_prop_arg_t args = { 0 };
+
 	const char *dsname = lua_tostring(state, 1);
 	const char *prop = lua_tostring(state, 2);
 	const char *val = lua_tostring(state, 3);
 
-	dpsa.dpsa_dsname = dsname;
-	dpsa.dpsa_source = ZPROP_SRC_LOCAL;
-	dpsa.dpsa_props = fnvlist_alloc();
-	fnvlist_add_string(dpsa.dpsa_props, prop, val);
+	args.state = state;
+	args.dsname = dsname;
+	args.prop = prop;
+	args.val = val;
 
-	zcp_cleanup_handler_t *zch = zcp_register_cleanup(state,
-	    (zcp_cleanup_t *)&fnvlist_free, dpsa.dpsa_props);
-
-	err = zcp_sync_task(state, dsl_props_set_check, dsl_props_set_sync,
-	    &dpsa, sync, dsname);
-
-	zcp_deregister_cleanup(state, zch);
-	fnvlist_free(dpsa.dpsa_props);
+	err = zcp_sync_task(state, zcp_set_prop_check, zcp_set_prop_sync,
+	    &args, sync, dsname);
 
 	return (err);
 }

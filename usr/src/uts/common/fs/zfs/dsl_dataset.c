@@ -22,7 +22,7 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2011, 2017 by Delphix. All rights reserved.
- * Copyright (c) 2014, Joyent, Inc. All rights reserved.
+ * Copyright 2019 Joyent, Inc.
  * Copyright (c) 2014 RackTop Systems.
  * Copyright (c) 2014 Spectra Logic Corporation, All rights reserved.
  * Copyright (c) 2014 Integros [integros.com]
@@ -3797,7 +3797,7 @@ typedef struct dsl_dataset_set_qr_arg {
 
 
 /* ARGSUSED */
-static int
+int
 dsl_dataset_set_refquota_check(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_set_qr_arg_t *ddsqra = arg;
@@ -3841,7 +3841,7 @@ dsl_dataset_set_refquota_check(void *arg, dmu_tx_t *tx)
 	return (0);
 }
 
-static void
+void
 dsl_dataset_set_refquota_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_set_qr_arg_t *ddsqra = arg;
@@ -3881,7 +3881,7 @@ dsl_dataset_set_refquota(const char *dsname, zprop_source_t source,
 	    ZFS_SPACE_CHECK_EXTRA_RESERVED));
 }
 
-static int
+int
 dsl_dataset_set_refreservation_check(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_set_qr_arg_t *ddsqra = arg;
@@ -3969,7 +3969,7 @@ dsl_dataset_set_refreservation_sync_impl(dsl_dataset_t *ds,
 	mutex_exit(&ds->ds_dir->dd_lock);
 }
 
-static void
+void
 dsl_dataset_set_refreservation_sync(void *arg, dmu_tx_t *tx)
 {
 	dsl_dataset_set_qr_arg_t *ddsqra = arg;

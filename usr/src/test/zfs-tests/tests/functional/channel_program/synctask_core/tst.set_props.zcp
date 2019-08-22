@@ -1,0 +1,167 @@
+--
+-- This file and its contents are supplied under the terms of the
+-- Common Development and Distribution License ("CDDL"), version 1.0.
+-- You may only use this file in accordance with the terms of version
+-- 1.0 of the CDDL.
+--
+-- A full copy of the text of the CDDL should have accompanied this
+-- source.  A copy of the CDDL is also available via the Internet at
+-- http://www.illumos.org/license/CDDL.
+--
+
+--
+-- Copyright (c) 2017 by Delphix. All rights reserved.
+--
+arg = ...
+fs = arg["argv"][1]
+
+pos_props = {}
+neg_props = {}
+
+pos_props["a:prop"] = {"hello"}
+neg_props["notaproperty"] = {"hello"}
+
+pos_props["aclinherit"] = {"discard", "noallow", "passthrough", "restricted"}
+neg_props["aclinherit"] = {"not_real"}
+
+pos_props["aclmode"] = {"discard", "groupmask", "passthrough", "restricted"}
+neg_props["aclmode"] = {"not_real"}
+
+pos_props["atime"] = {"on", "off"}
+neg_props["atime"] = {"not_real"}
+
+pos_props["canmount"] = {"on", "off", "noauto"}
+neg_props["canmount"] = {"not_real"}
+
+pos_props["checksum"] = {"on", "off", "fletcher2", "fletcher4", "sha256", "sha512", "skein", "edonr"}
+neg_props["checksum"] = {"not_real"}
+
+pos_props["compression"] = {"on", "off", "lzjb", "gzip", "gzip-1", "zle", "lz4"}
+neg_props["compression"] = {"not_real"}
+
+pos_props["copies"] = {"1", "2", "3"}
+neg_props["copies"] = {"5"}
+
+pos_props["devices"] = {"on", "off"}
+neg_props["deviecs"] = {"not_real"}
+
+pos_props["exec"] = {"on", "off"}
+neg_props["exec"] = {"not_real"}
+
+--pos_props["filesystem_limit"] = {"10"}
+--neg_props["filesystem_limit"] = {"astring"}
+
+--pos_props["mountpoint"] = {}
+--neg_props["mountpoint"] = {}
+
+pos_props["primarycache"] = {"all", "none", "metadata"}
+neg_props["primarycache"] = {"not_real"}
+
+--pos_props["quota"] = {"15G"}
+neg_props["quota"] = {"10"}
+
+pos_props["readonly"] = {"on", "off"}
+neg_props["readonly"] = {"not_real"}
+
+--[[
+-- TODO fails an assertion in blksz_changed_cb
+pos_props["recordsize"] = {"8"}
+neg_props["recordsize"] = {}
+
+pos_props["refquota"] = {}
+neg_props["refquota"] = {}
+
+pos_props["refreservation"] = {}
+neg_props["refreservation"] = {}
+
+pos_props["reservation"] = {}
+neg_props["reservation"] = {}
+
+pos_props["secondarycache"] = {}
+neg_props["secondarycache"] = {}
+
+pos_props["shareiscsi"] = {}
+neg_props["shareiscsi"] = {}
+
+pos_props["sharenfs"] = {}
+neg_props["sharenfs"] = {}
+
+pos_props["setupuid"] = {}
+neg_props["setupuid"] = {}
+
+pos_props["snapdir"] = {}
+neg_props["snapdir"] = {}
+
+pos_props["snapshot_limit"] = {}
+neg_props["snapshot_limit"] = {}
+
+pos_props["version"] = {}
+neg_props["version"] = {}
+
+pos_props["volsize"] = {}
+neg_props["volsize"] = {}
+
+pos_props["volblocksize"] = {}
+neg_props["volblocksize"] = {}
+
+pos_props["zoned"] = {}
+neg_props["zoned"] = {}
+
+pos_props["xattr"] = {}
+neg_props["xattr"] = {}
+--]]
+-- READONLY
+neg_props["available"]            = {"not_valid"}
+neg_props["compressratio"]        = {"not_valid"}
+neg_props["creation"]             = {"not_valid"}
+neg_props["mounted"]              = {"not_valid"}
+neg_props["origin"]               = {"not_valid"}
+neg_props["referenced"]           = {"not_valid"}
+neg_props["type"]                 = {"not_valid"}
+neg_props["used"]                 = {"not_valid"}
+neg_props["usedbychildren"]       = {"not_valid"}
+neg_props["usedbydataset"]        = {"not_valid"}
+neg_props["usedbyrefreservation"] = {"not_valid"}
+neg_props["usedbysnapshots"]      = {"not_valid"}
+
+--TODO - fails on a newly created fs
+--TODO test: Currently, only user properties can be modified on snapshots.
+
+set_fail = {}
+val_fail = {}
+-- Test properies that should work
+for prop, values in pairs(pos_props) do
+    for i, val in ipairs(values) do
+        old_val, src = zfs.get_prop(fs, prop)
+
+	-- Attempt to set the property to the specified value
+        err = zfs.sync.set_prop(fs, prop, val)
+
+        if (err ~= 0) then
+            set_fail[prop] = err -- tuple of prop, val that resulted in error
+        else
+	    -- use get_prop to check that the set took affect
+            new_val, src = zfs.get_prop(fs, prop)
+	    if (tostring(new_val) ~= tostring(val)) then
+	        val_fail[prop] = new_val
+            end
+
+            -- We modified the prop, restore old value
+            err = zfs.sync.set_prop(fs, prop, old_val)
+            if (err ~= 0) then return err end
+        end
+    end
+end
+-- Test properies that should fail
+--[[
+for prop, expected in pairs(neg_props) do
+        exp_val = expected[1]
+
+	-- Attempt to set the property to the specified value
+        err = zfs.sync.set_prop(fs, prop, exp_val)
+        if (err == 0) then
+            set_fail[prop] = err -- tuple of prop, val that resulted in error
+        end
+end
+--]]
+return {set_fail, val_fail}

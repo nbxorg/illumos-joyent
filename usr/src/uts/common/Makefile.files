@@ -1443,6 +1443,7 @@ ZFS_COMMON_OBJS +=		\
 	zcp_get.o		\
 	zcp_global.o		\
 	zcp_iter.o		\
+	zcp_set.o		\
 	zcp_synctask.o		\
 	zfs_byteswap.o		\
 	zfs_debug.o		\

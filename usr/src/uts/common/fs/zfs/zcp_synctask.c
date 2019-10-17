@@ -316,6 +316,50 @@ zcp_synctask_set_prop(lua_State *state, boolean_t sync, nvlist_t *err_details)
 	return (err);
 }
 
+static int zcp_synctask_inherit_prop(lua_State *, boolean_t,
+    nvlist_t *err_details);
+static zcp_synctask_info_t zcp_synctask_inherit_prop_info = {
+	.name = "inherit",
+	.func = zcp_synctask_inherit_prop,
+	.space_check = ZFS_SPACE_CHECK_RESERVED,
+	.blocks_modified = 2, /* 2 * numprops */
+	.pargs = {
+		{ .za_name = "dataset", .za_lua_type = LUA_TSTRING },
+		{ .za_name = "property", .za_lua_type = LUA_TSTRING },
+		{ NULL, 0 }
+	},
+	.kwargs = {
+		{ NULL, 0 }
+	},
+};
+
+static int
+zcp_synctask_inherit_prop(lua_State *state, boolean_t sync,
+    nvlist_t *err_details)
+{
+	int err;
+	dsl_props_set_arg_t dpsa = { 0 };
+
+	const char *dsname = lua_tostring(state, 1);
+	const char *prop = lua_tostring(state, 2);
+
+	dpsa.dpsa_dsname = dsname;
+	dpsa.dpsa_source = ZPROP_SRC_INHERITED;
+	dpsa.dpsa_props = fnvlist_alloc();
+	fnvlist_add_boolean(dpsa.dpsa_props, prop);
+
+	zcp_cleanup_handler_t *zch = zcp_register_cleanup(state,
+	    (zcp_cleanup_t *)&fnvlist_free, dpsa.dpsa_props);
+
+	err = zcp_sync_task(state, dsl_props_set_check,
+	    dsl_props_set_sync, &dpsa, sync, dsname);
+
+	zcp_deregister_cleanup(state, zch);
+	fnvlist_free(dpsa.dpsa_props);
+
+	return (err);
+}
+
 static int zcp_synctask_change_key(lua_State *, boolean_t, nvlist_t *);
 static zcp_synctask_info_t zcp_synctask_change_key_info = {
 	.name = "change_key",
@@ -462,6 +506,7 @@ zcp_load_synctask_lib(lua_State *state, boolean_t sync)
 		&zcp_synctask_snapshot_info,
 		&zcp_synctask_set_prop_info,
 		&zcp_synctask_change_key_info,
+		&zcp_synctask_inherit_prop_info,
 		NULL
 	};
 

@@ -29,7 +29,7 @@
  */
 
 /*
- * Copyright 2018 Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 
 #include <sys/cdefs.h>
@@ -364,9 +364,34 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 			else
 				br->br_resid = 0;
 		}
-#endif
 		else
 			 err = EOPNOTSUPP;
+#else
+		else if (bc->bc_ischr) {
+			dkioc_free_list_t dfl = {
+				.dfl_num_exts = 1,
+				.dfl_offset = br->br_offset,
+				.dfl_exts[0].dfle_start = br->br_offset,
+				.dfl_exts[0].dfle_length = br->br_resid
+			};
+			if (ioctl(bc->bc_fd, DKIOCFREE, &dfl))
+				err = errno;
+			else
+				br->br_resid = 0;
+		} else {
+			struct flock fl = {
+				.l_whence = 0,
+				.l_type = F_WRLCK,
+				.l_start = br->br_offset,
+				.l_len = br->br_resid
+			};
+
+			if (fcntl(bc->bc_fd, F_FREESP, &fl))
+				err = errno;
+			else
+				br->br_resid = 0;
+		}
+#endif
 		break;
 	default:
 		err = EINVAL;
@@ -629,6 +654,18 @@ blockif_open(const char *optstr, const char *ident)
 			}
 		}
 	}
+
+	/*
+	 * We assume all of our backends support some sort of delete.
+	 * This is true for files on zfs, ufs, udfs, and zvols. In addition
+	 * NFSv3 and NFSv4 will pass along a FREESP request to the server.
+	 * Anyone being adventurous should be prepared for such requests to
+	 * fail. This _shouldn't_ present a problem to the guest -- they
+	 * should already be prepared to deal with hardware that might
+	 * not support TRIM or UNMAP, so in theory this shouldn't be
+	 * any different, but caveat optor.
+	 */
+	candelete = 1;
 #endif
 
 #ifndef WITHOUT_CAPSICUM

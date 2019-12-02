@@ -645,6 +645,10 @@ blockif_open(const char *optstr, const char *ident)
 				}
 			}
 		}
+
+		if (ioctl(fd, DKIOC_CANFREE, &candelete))
+			candelete = 0;
+
 	} else {
 		int flags;
 
@@ -654,19 +658,22 @@ blockif_open(const char *optstr, const char *ident)
 				wce = WCE_FCNTL;
 			}
 		}
-	}
 
-	/*
-	 * We assume all of our backends support some sort of delete.
-	 * This is true for files on zfs, ufs, udfs, and zvols. In addition
-	 * NFSv3 and NFSv4 will pass along a FREESP request to the server.
-	 * Anyone being adventurous should be prepared for such requests to
-	 * fail. This _shouldn't_ present a problem to the guest -- they
-	 * should already be prepared to deal with hardware that might
-	 * not support TRIM or UNMAP, so in theory this shouldn't be
-	 * any different, but caveat optor.
-	 */
-	candelete = 1;
+		/*
+		 * We don't have a way to discover if a file supports the
+		 * FREESP fcntl cmd (other than trying it).  However,
+		 * zfs, ufs, tmpfs, and udfs all support the FREESP fcntl cmd.
+		 * Nfsv4 and nfsv4 also forward the FREESP request
+		 * to the server, so we always enable it for file based
+		 * volumes. Anyone trying to run volumes on an unsupported
+		 * configuration is on their own, and should be prepared
+		 * for the requests to fail.
+		 *
+		 * XXX: It might be useful to add an option to explicitly
+		 * enable/disable this for a volume.
+		 */
+		candelete = 1;
+	}
 #endif
 
 #ifndef WITHOUT_CAPSICUM

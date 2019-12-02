@@ -370,10 +370,11 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 		else if (bc->bc_ischr) {
 			dkioc_free_list_t dfl = {
 				.dfl_num_exts = 1,
-				.dfl_offset = br->br_offset,
+				.dfl_offset = 0,
 				.dfl_exts[0].dfle_start = br->br_offset,
 				.dfl_exts[0].dfle_length = br->br_resid
 			};
+
 			if (ioctl(bc->bc_fd, DKIOCFREE, &dfl))
 				err = errno;
 			else

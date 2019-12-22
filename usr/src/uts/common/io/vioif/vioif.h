@@ -412,6 +412,9 @@ struct vioif {
 	 */
 	unsigned int			vif_mac_from_host:1;
 
+	unsigned int			vif_has_ctrlq:1;
+	unsigned int			vif_has_ctrlq_rx:1;
+
 	uint_t				vif_mtu;
 	uint_t				vif_mtu_max;
 	uint8_t				vif_mac[ETHERADDRL];
@@ -477,6 +480,7 @@ struct vioif {
 	uint64_t			vif_stat_tx_reclaim;
 
 	uint64_t			vif_noctrlbuf;
+	uint64_t			vif_ctrlbuf_toosmall;
 };
 
 #ifdef __cplusplus

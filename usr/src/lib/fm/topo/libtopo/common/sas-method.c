@@ -235,7 +235,7 @@ static boolean_t
 sas_node_matches_logical_disk(topo_mod_t *mod, tnode_t *sas_node,
     tnode_t *hc_node)
 {
-	char *ldisk = NULL, *orig_ldisk;
+	char *ldisk = NULL, *orig_ldisk = NULL;
 	uint_t ldisksz;
 	uint64_t wwn;
 	int err = 0;
@@ -279,7 +279,8 @@ sas_node_matches_logical_disk(topo_mod_t *mod, tnode_t *sas_node,
 	topo_mod_free(mod, orig_ldisk, ldisksz);
 	return (wwn == topo_node_instance(sas_node));
 done:
-	topo_mod_free(mod, orig_ldisk, ldisksz);
+	if (orig_ldisk != NULL)
+		topo_mod_free(mod, orig_ldisk, ldisksz);
 	return (B_FALSE);
 }
 

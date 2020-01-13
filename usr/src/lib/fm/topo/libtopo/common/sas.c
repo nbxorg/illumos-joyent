@@ -179,6 +179,7 @@
 #include <smhbaapi.h>
 #include <scsi/libsmp.h>
 #include <libdevinfo.h>
+#include <scsi/plugins/ses/framework/ses2.h>
 
 /* Methods for the root sas topo node. */
 extern int sas_fmri_nvl2str(topo_mod_t *, tnode_t *, topo_version_t,
@@ -995,13 +996,15 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 		if (disc_resp->sdr_attached_device_type == SMP_DEV_SAS_SATA &&
 		    (disc_resp->sdr_attached_ssp_target ||
 		    disc_resp->sdr_attached_stp_target) &&
-		    disc_resp->sdr_connector_type == 0x20 &&
+		    disc_resp->sdr_connector_type >= SES_SASCONN_T_SFF_8482_R &&
+		    disc_resp->sdr_connector_type <= SES_SASCONN_T_VIRTUAL &&
 		    !disc_resp->sdr_attached_smp_target &&
 		    !disc_resp->sdr_attached_smp_initiator) {
 			/*
-			 * 0x20 == expander backplane receptacle.
-			 * XXX We should use ses_sasconn_type_t enum from
-			 * ses2.h. Acceptable values (as of SES-3): 0x20 - 0x2F.
+			 * Acceptable values (as of SES-3) for
+			 * sdr_connector_type is 0x20 - 0x2F. These are the
+			 * 'Internal connectors to end devices' according to
+			 * the SES spec.
 			 *
 			 * XXX sdr_attached_smp_initiator is B_TRUE for SMP
 			 * devices. We should map these too, but for now ignore
@@ -1228,7 +1231,7 @@ sas_connect_hba(topo_hdl_t *hdl, topo_edge_t *edge, boolean_t last, void* arg)
 		 * > 1.
 		 */
 		if (nfound != 1) {
-			topo_mod_dprintf(mod, "found incorrect number of "
+			topo_mod_dprintf(mod, "found unexpected number of "
 			    "vertex connections from HBA %" PRIx64 " to "
 			    "%" PRIx64 " (%d)", topo_node_instance(node),
 			    hba_port->sp_att_wwn,

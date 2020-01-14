@@ -11,7 +11,7 @@
 #
 
 #
-# Copyright 2019 Joyent, Inc.
+# Copyright 2020 Joyent, Inc.
 #
 
 set -o xtrace
@@ -84,6 +84,8 @@ function unlock_pool
 
     echo "Failed to unlock $pool; recovery may be required" | \
         tee -a /dev/console >&2
+
+    exit $SMF_EXIT_ERR_FATAL
 }
 
 /bin/bootparams | grep "^noimport=true" >/dev/null

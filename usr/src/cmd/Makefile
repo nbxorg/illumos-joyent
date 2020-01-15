@@ -83,6 +83,7 @@ COMMON_SUBDIRS=		\
 	cal		\
 	captoinfo	\
 	cat		\
+	ccidadm		\
 	cdrw		\
 	cfgadm		\
 	checkeq		\
@@ -378,6 +379,7 @@ COMMON_SUBDIRS=		\
 	sgs		\
 	sh		\
 	shcomp		\
+	sleep		\
 	smbios		\
 	smbsrv		\
 	smserverd	\

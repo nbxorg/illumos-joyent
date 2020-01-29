@@ -10,7 +10,7 @@
  */
 
 /*
- * Copyright 2019 Joyent, Inc.
+ * Copyright 2020 Joyent, Inc.
  */
 
 /*
@@ -532,6 +532,56 @@ err:
 	return (ret);
 }
 
+nvlist_t *
+sas_vertex_fmri_create(topo_mod_t *mod, topo_vertex_t *vtx,
+    struct sas_phy_info *phyinfo)
+{
+	const char *name;
+	topo_instance_t inst;
+	tnode_t *tn;
+	nvlist_t *auth = NULL, *fmri = NULL;
+
+	tn = topo_vertex_node(vtx);
+	name = topo_node_name(tn);
+	inst = topo_node_instance(tn);
+
+	if (topo_mod_nvalloc(mod, &auth, NV_UNIQUE_NAME) != 0 ||
+	    nvlist_add_string(auth, FM_FMRI_SAS_TYPE,
+	    FM_FMRI_SAS_TYPE_PATHNODE) != 0) {
+		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		goto out;
+	}
+
+	if (strcmp(name, TOPO_VTX_PORT) == 0) {
+		if (phyinfo == NULL) {
+			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			topo_mod_dprintf(mod, "phy range not provided for "
+			    "node: %s=%" PRIx64, name, inst);
+			goto out;
+		}
+
+		if (nvlist_add_uint32(auth, FM_FMRI_SAS_START_PHY,
+		    phyinfo->start_phy) != 0 ||
+		    nvlist_add_uint32(auth, FM_FMRI_SAS_END_PHY,
+		    phyinfo->end_phy) != 0) {
+			(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+			topo_mod_dprintf(mod, "failed to construct auth for "
+			    "node: %s=%" PRIx64, name, inst);
+			goto out;
+		}
+	}
+	if ((fmri = topo_mod_sasfmri(mod, FM_SAS_SCHEME_VERSION, name, inst,
+	    auth)) == NULL) {
+		/* errno set */
+		topo_mod_dprintf(mod, "failed to construct FMRI for "
+		    "%s=%" PRIx64, name, inst);
+		goto out;
+	}
+
+out:
+	nvlist_free(auth);
+	return (fmri);
+}
 
 static topo_vertex_t *
 sas_create_vertex(topo_mod_t *mod, const char *name, topo_instance_t inst,
@@ -541,7 +591,7 @@ sas_create_vertex(topo_mod_t *mod, const char *name, topo_instance_t inst,
 	tnode_t *tn;
 	topo_pgroup_info_t pgi;
 	int err;
-	nvlist_t *auth = NULL, *fmri = NULL;
+	nvlist_t *fmri = NULL;
 
 	pgi.tpi_namestab = TOPO_STABILITY_PRIVATE;
 	pgi.tpi_datastab = TOPO_STABILITY_PRIVATE;
@@ -565,39 +615,13 @@ sas_create_vertex(topo_mod_t *mod, const char *name, topo_instance_t inst,
 		    "%s=%" PRIx64 "", name, inst);
 		return (NULL);
 	}
-	tn = topo_vertex_node(vtx);
 
-	if (topo_mod_nvalloc(mod, &auth, NV_UNIQUE_NAME) != 0 ||
-	    nvlist_add_string(auth, FM_FMRI_SAS_TYPE,
-	    FM_FMRI_SAS_TYPE_PATHNODE) != 0) {
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
-		goto err;
-	}
-	if (strcmp(name, TOPO_VTX_PORT) == 0 && phyinfo != NULL) {
-		/*
-		 * if (phyinfo == NULL) {
-		 *	goto err;
-		 * }
-		 */
-		if (nvlist_add_uint32(auth, FM_FMRI_SAS_START_PHY,
-		    phyinfo->start_phy) != 0 ||
-		    nvlist_add_uint32(auth, FM_FMRI_SAS_END_PHY,
-		    phyinfo->end_phy) != 0) {
-			(void) topo_mod_seterrno(mod, EMOD_NOMEM);
-			topo_mod_dprintf(mod, "failed to construct auth for "
-			    "node: %s=%" PRIx64, name, inst);
-			goto err;
-		}
-	}
-	if ((fmri = topo_mod_sasfmri(mod, FM_SAS_SCHEME_VERSION, name, inst,
-	    auth)) == NULL) {
+	if ((fmri = sas_vertex_fmri_create(mod, vtx, phyinfo)) == NULL) {
 		/* errno set */
-		topo_mod_dprintf(mod, "failed to construct FMRI for "
-		    "%s=%" PRIx64 ": %s", name, inst, topo_strerror(err));
 		goto err;
 	}
-	nvlist_free(auth);
 
+	tn = topo_vertex_node(vtx);
 	if (topo_pgroup_create(tn, &pgi, &err) != 0) {
 		(void) topo_mod_seterrno(mod, err);
 		topo_mod_dprintf(mod, "failed to create %s propgroup on "
@@ -631,7 +655,6 @@ sas_create_vertex(topo_mod_t *mod, const char *name, topo_instance_t inst,
 err:
 	topo_mod_dprintf(mod,
 	    "failed to create vertex %s=%" PRIx64, name, inst);
-	nvlist_free(auth);
 	nvlist_free(fmri);
 	topo_vertex_destroy(mod, vtx);
 	return (NULL);
@@ -673,7 +696,7 @@ sas_vtx_match(topo_hdl_t *thp, topo_vertex_t *vtx, boolean_t last,
 	sas_vtx_search_t *search = arg;
 	sas_vtx_t *res = NULL;
 	tnode_t *node;
-       
+
 	node = topo_vertex_node(vtx);
 
 	if (node->tn_instance == search->inst &&
@@ -712,7 +735,7 @@ sas_find_connected_vtx(topo_mod_t *mod, uint64_t att_wwn, uint64_t search_wwn,
 	tnode_t *tn;
 	uint_t nfound = 0;
 
- 	if ((vtx_list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
+	if ((vtx_list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
 		return (topo_mod_seterrno(mod, EMOD_NOMEM));
 	}
 
@@ -737,13 +760,13 @@ sas_find_connected_vtx(topo_mod_t *mod, uint64_t att_wwn, uint64_t search_wwn,
 			sas_port_t *res_port;
 			sas_vtx_t *vtx;
 			tn = topo_vertex_node(res->tds_vtx);
-		    
+
 			if ((res_port = topo_node_getspecific(tn)) == NULL) {
-			    topo_mod_dprintf(mod, "port info not found for %s=%"
-			        PRIx64, topo_node_name(tn),
-				topo_node_instance(tn));
-			    nfound = topo_mod_seterrno(mod, EMOD_UNKNOWN);
-			    goto out;
+				topo_mod_dprintf(mod, "port info not found for "
+				    "%s=%" PRIx64, topo_node_name(tn),
+				    topo_node_instance(tn));
+				nfound = topo_mod_seterrno(mod, EMOD_UNKNOWN);
+				goto out;
 			}
 
 			if ((res_port->sp_att_wwn != att_wwn) ||
@@ -784,61 +807,250 @@ out:
 }
 
 /*
- * Common routine to create wide ports for expander phys.
+ * Boilerplate SMP code. This returns an smp_action_t (or NULL on error)
+ * which the caller can use to get the response. The caller must call
+ * smp_action_free() when they are done with the SMP response buffer.
  *
- * This assumes that the att_wwn and local_wwn have the correct byte order
- * already.
+ * Currently this only supports the few simple SMP functions that this module
+ * requires.
  */
-int
-sas_wide_port_create(topo_mod_t *mod, const char *smp_path,
-    struct sas_phy_info *wide_port_phys, uint64_t att_wwn, uint64_t local_wwn)
+static void*
+sas_smp_exec(topo_mod_t *mod, smp_target_t *tgt, smp_function_t func,
+    uint8_t phy, smp_action_t **axn)
+{
+
+	smp_action_t *a;
+	smp_result_t smp_res;
+	uint8_t *smp_resp;
+	size_t smp_resp_len;
+
+	if ((a = smp_action_alloc(func, tgt, 0)) == NULL) {
+		topo_mod_dprintf(mod, "failed to allocate SMP action (%s)",
+		    smp_errmsg());
+		return (NULL);
+	}
+
+	if (func == SMP_FUNC_DISCOVER) {
+		smp_discover_req_t *disc_req;
+
+		smp_action_get_request(a, (void **) &disc_req, NULL);
+		disc_req->sdr_phy_identifier = phy;
+	}
+
+	if (smp_exec(a, tgt) != 0) {
+		topo_mod_dprintf(mod, "smp_exec failed");
+		smp_action_free(a);
+		return (NULL);
+	}
+
+	smp_action_get_response(a, &smp_res, (void **)&smp_resp, &smp_resp_len);
+
+	if (smp_res != SMP_RES_FUNCTION_ACCEPTED &&
+	    smp_res != SMP_RES_PHY_VACANT) {
+		topo_mod_dprintf(mod, "failed to execute SMP command '%u' (%d)",
+		    func, smp_res);
+		smp_action_free(a);
+		return (NULL);
+	}
+
+	*axn = a;
+	return (smp_resp);
+}
+
+static int
+sas_create_ports(topo_mod_t *mod, smp_discover_resp_t *disc_resp,
+    topo_vertex_t *expd_vtx, struct sas_phy_info *phyinfo, const char *smp_path)
 {
 	tnode_t *tn;
-	int ret = 0, err;
-	sas_port_t *expd_port = NULL;
+	int err;
+	int ret = 0;
 
-	if ((expd_port =
-	    topo_mod_zalloc(mod, sizeof (sas_port_t))) == NULL) {
-		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
-		goto done;
+	const char *nodename;
+	topo_instance_t nodeinst;
+	struct sas_phy_info tgt_phyinfo;
+
+	tn = topo_vertex_node(expd_vtx);
+	nodename = topo_node_name(tn);
+	nodeinst = topo_node_instance(tn);
+
+	/*
+	 * These are the conditionals that filter out everything that
+	 * doesn't represent a SAS target PHY.
+	 *
+	 * Acceptable values (as of SES-3) for sdr_connector_type is
+	 * 0x20 - 0x2F. These are the 'Internal connectors to end
+	 * devices' according to the SES spec.
+	 *
+	 * XXX sdr_attached_smp_initiator is B_TRUE for SMP
+	 * devices. We should map these too, but for now ignore
+	 * them. They likely need their own (empty?) property
+	 * group.
+	 */
+	if (disc_resp->sdr_attached_device_type == SMP_DEV_SAS_SATA &&
+	    (disc_resp->sdr_attached_ssp_target ||
+	    disc_resp->sdr_attached_stp_target) &&
+	    disc_resp->sdr_connector_type >= SES_SASCONN_T_SFF_8482_R &&
+	    disc_resp->sdr_connector_type <= SES_SASCONN_T_VIRTUAL &&
+	    !disc_resp->sdr_attached_smp_target &&
+	    !disc_resp->sdr_attached_smp_initiator) {
+
+		topo_vertex_t *ex_pt_vtx, *port_vtx, *tgt_vtx;
+
+		if ((ex_pt_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
+		    ntohll(disc_resp->sdr_sas_addr), phyinfo)) == NULL) {
+			ret = -1;
+			goto done;
+		}
+
+		tn = topo_vertex_node(ex_pt_vtx);
+		if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
+		    ntohll(disc_resp->sdr_sas_addr), &err) != 0 ||
+		    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
+		    ntohll(disc_resp->sdr_attached_sas_addr), &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE,
+		    smp_path, &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
+		    TOPO_SASPORT_TYPE_EXPANDER, &err) != 0) {
+			topo_mod_dprintf(mod, "Failed to set props on %s=%"
+			    PRIx64, nodename, nodeinst);
+			ret = -1;
+			goto done;
+		}
+		if (topo_edge_new(mod, expd_vtx, ex_pt_vtx) != 0) {
+			topo_vertex_destroy(mod, ex_pt_vtx);
+			ret = -1;
+			goto done;
+		}
+
+		/*
+		 * Phy info for attached device port is the device's
+		 * internal phy.
+		 */
+		tgt_phyinfo.start_phy = disc_resp->sdr_attached_phy_identifier;
+		tgt_phyinfo.end_phy = disc_resp->sdr_attached_phy_identifier;
+		if ((port_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
+		    ntohll(disc_resp->sdr_attached_sas_addr), &tgt_phyinfo)) ==
+		    NULL) {
+
+			topo_vertex_destroy(mod, ex_pt_vtx);
+			ret = -1;
+			goto done;
+		}
+		tn = topo_vertex_node(port_vtx);
+		if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
+		    ntohll(disc_resp->sdr_attached_sas_addr), &err) != 0 ||
+		    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
+		    ntohll(disc_resp->sdr_sas_addr), &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
+		    TOPO_SASPORT_TYPE_TARGET, &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE, "TBD",
+		    &err) != 0) {
+			topo_mod_dprintf(mod, "Failed to set props on "
+			    "%s=%" PRIx64 " (%s)", nodename, nodeinst,
+			    topo_strerror(err));
+			ret = -1;
+			goto done;
+		}
+
+		if (topo_edge_new(mod, ex_pt_vtx, port_vtx) != 0) {
+			topo_vertex_destroy(mod, ex_pt_vtx);
+			topo_vertex_destroy(mod, port_vtx);
+			ret = -1;
+			goto done;
+		}
+
+		/* This is a target device. */
+		if ((tgt_vtx = sas_create_vertex(mod, TOPO_VTX_TARGET,
+		    ntohll(disc_resp->sdr_attached_device_name),
+		    &tgt_phyinfo)) == NULL) {
+			topo_vertex_destroy(mod, ex_pt_vtx);
+			topo_vertex_destroy(mod, port_vtx);
+			ret = -1;
+			goto done;
+		}
+
+		if (topo_edge_new(mod, port_vtx, tgt_vtx) != 0) {
+			topo_vertex_destroy(mod, ex_pt_vtx);
+			topo_vertex_destroy(mod, port_vtx);
+			topo_vertex_destroy(mod, tgt_vtx);
+			ret = -1;
+			goto done;
+		}
+
+		tn = topo_vertex_node(tgt_vtx);
+
+	/*
+	 * This phy is for another 'complicated' device like an expander
+	 * or an HBA. This phy may be in a wide port configuration.
+	 *
+	 * To discover wide ports we allow the phy discovery loop to
+	 * continue to run. When this block first encounters a possibly
+	 * wide port it sets the start phy to the current phy, and it is
+	 * not modified again.
+	 *
+	 * Each time this block finds the same attached SAS address we
+	 * update the end phy identifier to be the current phy.
+	 *
+	 * Once the phy discovery loop finds a new attached SAS address
+	 * we know that the (possibly) wide port is done being
+	 * discovered and it should be 'committed.'
+	 */
+	} else if (disc_resp->sdr_attached_device_type == SMP_DEV_EXPANDER ||
+	    (disc_resp->sdr_attached_ssp_initiator ||
+	    disc_resp->sdr_attached_stp_initiator ||
+	    disc_resp->sdr_attached_smp_initiator)) {
+
+		sas_port_t *portinfo = NULL;
+		if ((portinfo = topo_mod_zalloc(mod, sizeof (sas_port_t))) ==
+		    NULL) {
+
+			ret = topo_mod_seterrno(mod, EMOD_NOMEM);
+			goto done;
+		}
+
+		portinfo->sp_att_wwn = disc_resp->sdr_attached_sas_addr;
+		portinfo->sp_is_expander = B_TRUE;
+
+		if ((portinfo->sp_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
+		    nodeinst, phyinfo)) == NULL) {
+			topo_mod_free(mod, portinfo, sizeof (sas_port_t));
+			ret = -1;
+			goto done;
+		}
+		tn = topo_vertex_node(portinfo->sp_vtx);
+
+		if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
+		    nodeinst, &err) != 0 ||
+		    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
+		    portinfo->sp_att_wwn, &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE,
+		    smp_path, &err) != 0 ||
+		    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
+		    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
+		    TOPO_SASPORT_TYPE_EXPANDER, &err) != 0) {
+			topo_mod_dprintf(mod,
+			    "Failed to set props on %s=%" PRIx64 " (%s)",
+			    topo_node_name(tn), topo_node_instance(tn),
+			    topo_strerror(err));
+			topo_mod_free(mod, portinfo, sizeof (sas_port_t));
+			ret = -1;
+			goto done;
+		}
+		topo_node_setspecific(tn, portinfo);
 	}
-
-	expd_port->sp_att_wwn = att_wwn;
-	expd_port->sp_is_expander = B_TRUE;
-	if ((expd_port->sp_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
-	    local_wwn, wide_port_phys)) == NULL) {
-		topo_mod_free(mod, expd_port, sizeof (sas_port_t));
-		ret = -1;
-		goto done;
-	}
-
-	tn = topo_vertex_node(expd_port->sp_vtx);
-
-	if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-	    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
-	    local_wwn, &err) != 0 ||
-	    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-	    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
-	    att_wwn, &err) != 0 ||
-	    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-	    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE,
-	    smp_path, &err) != 0 ||
-	    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-	    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
-	    TOPO_SASPORT_TYPE_EXPANDER, &err) != 0) {
-		topo_mod_dprintf(mod,
-		    "Failed to set props on %s=%" PRIx64 " (%s)",
-		    topo_node_name(tn), topo_node_instance(tn),
-		    topo_strerror(err));
-		ret = -1;
-		goto done;
-	}
-	topo_node_setspecific(tn, expd_port);
 
 done:
-	if (ret != 0 && expd_port != NULL) {
-		topo_mod_free(mod, expd_port, sizeof (sas_port_t));
-	}
 	return (ret);
 }
 
@@ -846,24 +1058,19 @@ static int
 sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 {
 	int ret = 0;
-	int i;
-	uint8_t *smp_resp, num_phys;
-	uint64_t expd_addr, wide_port_att_wwn;
-	size_t smp_resp_len;
-
-	boolean_t wide_port_discovery = B_FALSE;
+	uint8_t i;
+	uint8_t num_phys;
+	uint64_t expd_addr, prev_addr;
 
 	smp_target_def_t *tdef = NULL;
 	smp_target_t *tgt = NULL;
-	smp_action_t *axn = NULL;
+	smp_action_t *axn = NULL, *prev_axn = NULL;
 	smp_report_general_resp_t *report_resp = NULL;
 	smp_report_manufacturer_info_resp_t *manuf_resp = NULL;
+	smp_discover_resp_t *prev_disc_resp = NULL;
 	const char *nodename;
 	topo_instance_t nodeinst;
 	char exp_vid[9], exp_pid[17], *space;
-
-	smp_function_t func;
-	smp_result_t result;
 
 	topo_vertex_t *expd_vtx = NULL;
 	struct sas_phy_info phyinfo, wide_port_phys;
@@ -885,29 +1092,17 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 		goto done;
 	}
 
-	func = SMP_FUNC_REPORT_GENERAL;
-	axn = smp_action_alloc(func, tgt, 0);
-
-	if (smp_exec(axn, tgt) != 0) {
-		ret = -1;
-		smp_action_free(axn);
+	report_resp = (smp_report_general_resp_t *)sas_smp_exec(mod, tgt,
+	    SMP_FUNC_REPORT_GENERAL, 0, &axn);
+	if (report_resp == NULL) {
+		topo_mod_dprintf(mod, "SMP REPORT GENERAL failed on expander "
+		    "%s", smp_path);
 		goto done;
 	}
 
-	smp_action_get_response(axn, &result, (void **)&smp_resp,
-	    &smp_resp_len);
-	smp_action_free(axn);
-
-	if (result != SMP_RES_FUNCTION_ACCEPTED) {
-		topo_mod_dprintf(mod, "failed to execute 'report general' SMP"
-		    " command");
-		ret = -1;
-		goto done;
-	}
-
-	report_resp = (smp_report_general_resp_t *)smp_resp;
 	num_phys = report_resp->srgr_number_of_phys;
 	expd_addr = ntohll(report_resp->srgr_enclosure_logical_identifier);
+	smp_action_free(axn);
 
 	/* XXX start_phy = 0; end_phy = num_phys - 1; ? */
 	phyinfo.start_phy = 0;
@@ -941,28 +1136,18 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 
 	/*
 	 * Send a REPORT MANUFACTURER INFO command to the expander to retrieve
-	 * the manufacturer and model information.
+	 * the manufacturer and model information which will be added as node
+	 * properties.
 	 *
 	 * See the SPL section 9.4.4.4
 	 */
-	if ((axn = smp_action_alloc(SMP_FUNC_REPORT_MANUFACTURER_INFO, tgt,
-	    0)) == NULL) {
-		topo_mod_dprintf(mod, "%s: failed to allocate smp action (%s)",
-		    __func__, smp_errmsg());
-		ret = -1;
+	manuf_resp = (smp_report_manufacturer_info_resp_t *)sas_smp_exec(mod,
+	    tgt, SMP_FUNC_REPORT_MANUFACTURER_INFO, 0, &axn);
+	if (manuf_resp == NULL) {
+		topo_mod_dprintf(mod, "SMP REPORT MANUFACTURER INFO failed on "
+		    "expander %s", smp_path);
 		goto done;
 	}
-	if (smp_exec(axn, tgt) != 0) {
-		topo_mod_dprintf(mod, "%s: smp_exec of cmd 0x%x failed (%s)",
-		    __func__, SMP_FUNC_REPORT_MANUFACTURER_INFO, smp_errmsg());
-		smp_action_free(axn);
-		ret = -1;
-		goto done;
-	}
-	smp_action_get_response(axn, &result, (void **)&smp_resp,
-	    &smp_resp_len);
-	manuf_resp = (smp_report_manufacturer_info_resp_t *)smp_resp;
-	smp_action_free(axn);
 
 	/*
 	 * SMP strings are padded with trailing whitespace and not
@@ -975,6 +1160,8 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 	    sizeof (exp_vid));
 	(void) strlcpy(exp_pid, manuf_resp->srmir_product_identification,
 	    sizeof (exp_pid));
+
+	smp_action_free(axn);
 
 	if ((space = strchr(exp_vid, ' ')) != NULL)
 		*space = '\0';
@@ -994,229 +1181,48 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 		goto done;
 	}
 
-	for (i = 0; i < num_phys; i++) {
-		smp_discover_req_t *disc_req = NULL;
+	if (num_phys > 0) {
+		prev_disc_resp =  sas_smp_exec(mod, tgt, SMP_FUNC_DISCOVER, 0,
+		    &prev_axn);
+		if (prev_disc_resp == NULL) {
+			topo_mod_dprintf(mod, "SMP DISCOVER failed for phy %u "
+			    "on expander %s", i, smp_path);
+			goto done;
+		}
+
+		phyinfo.start_phy = 0;
+	}
+
+	for (i = 1; i < num_phys; i++) {
 		smp_discover_resp_t *disc_resp = NULL;
+		uint64_t addr;
 
-		func = SMP_FUNC_DISCOVER;
-		axn = smp_action_alloc(func, tgt, 0);
-		smp_action_get_request(axn, (void **) &disc_req, NULL);
-		disc_req->sdr_phy_identifier = i;
-
-		if (smp_exec(axn, tgt) != 0) {
-			topo_mod_dprintf(mod, "smp_exec failed");
-			smp_action_free(axn);
+		disc_resp = sas_smp_exec(mod, tgt, SMP_FUNC_DISCOVER, i, &axn);
+		if (disc_resp == NULL) {
+			topo_mod_dprintf(mod, "SMP DISCOVER failed for phy %u "
+			    "on expander %s", i, smp_path);
 			goto done;
 		}
 
-		smp_action_get_response(axn, &result, (void **) &smp_resp,
-		    &smp_resp_len);
-		smp_action_free(axn);
-
-		disc_resp = (smp_discover_resp_t *)smp_resp;
-		if (result != SMP_RES_FUNCTION_ACCEPTED &&
-		    result != SMP_RES_PHY_VACANT) {
-			topo_mod_dprintf(mod, "%s: error in SMP response (%d)",
-			    __func__, result);
-			goto done;
+		addr = ntohll(disc_resp->sdr_sas_addr);
+		if (addr == prev_addr) {
+			phyinfo.end_phy = i;
+		} else {
+			(void) sas_create_ports(mod, prev_disc_resp, expd_vtx,
+			    &phyinfo, smp_path);
+			phyinfo.start_phy = i;
+			phyinfo.end_phy = i;
 		}
 
-		/*
-		 * There's nothing at this phy, so ignore it and move on.
-		 *
-		 * Theoretically we could create a vertex for a vacant phy, but
-		 * we would then need to make another (empty) property group
-		 * specifically for vacant phys. There is not much perceived
-		 * value in doing all of that.
-		 */
-		if (result == SMP_RES_PHY_VACANT) {
-			continue;
-		}
-
-		/*
-		 * These are the conditionals that filter out everything that
-		 * doesn't represent a SAS target PHY.
-		 *
-		 * Acceptable values (as of SES-3) for sdr_connector_type is
-		 * 0x20 - 0x2F. These are the 'Internal connectors to end
-		 * devices' according to the SES spec.
-		 *
-		 * XXX sdr_attached_smp_initiator is B_TRUE for SMP
-		 * devices. We should map these too, but for now ignore
-		 * them. They likely need their own (empty?) property
-		 * group.
-		 */
-		if (disc_resp->sdr_attached_device_type == SMP_DEV_SAS_SATA &&
-		    (disc_resp->sdr_attached_ssp_target ||
-		    disc_resp->sdr_attached_stp_target) &&
-		    disc_resp->sdr_connector_type >= SES_SASCONN_T_SFF_8482_R &&
-		    disc_resp->sdr_connector_type <= SES_SASCONN_T_VIRTUAL &&
-		    !disc_resp->sdr_attached_smp_target &&
-		    !disc_resp->sdr_attached_smp_initiator) {
-
-			if (wide_port_discovery) {
-				wide_port_discovery = B_FALSE;
-				if (sas_wide_port_create(mod, smp_path,
-				    &wide_port_phys,
-				    htonll(wide_port_att_wwn),
-				    expd_addr) != 0) {
-					goto done;
-				}
-			}
-			topo_vertex_t *ex_pt_vtx, *port_vtx, *tgt_vtx;
-
-			/* Phy info for expander port is the expander's phy. */
-			phyinfo.start_phy = disc_resp->sdr_phy_identifier;
-			phyinfo.end_phy = disc_resp->sdr_phy_identifier;
-			if ((ex_pt_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
-			    ntohll(disc_resp->sdr_sas_addr),
-			    &phyinfo)) == NULL) {
-				ret = -1;
-				goto done;
-			}
-
-			tn = topo_vertex_node(ex_pt_vtx);
-			if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
-			    ntohll(disc_resp->sdr_sas_addr), &err) != 0 ||
-			    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
-			    ntohll(disc_resp->sdr_attached_sas_addr),
-			    &err) != 0 ||
-			    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE,
-			    smp_path, &err) != 0 ||
-			    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
-			    TOPO_SASPORT_TYPE_EXPANDER, &err) != 0) {
-				topo_mod_dprintf(mod, "Failed to set props on "
-				    "%s=%" PRIx64, nodename, nodeinst);
-				ret = -1;
-				goto done;
-			}
-
-			if (topo_edge_new(mod, expd_vtx, ex_pt_vtx) != 0) {
-				topo_vertex_destroy(mod, ex_pt_vtx);
-				ret = -1;
-				goto done;
-			}
-
-			/*
-			 * Phy info for attached device port is the device's
-			 * internal phy.
-			 */
-			phyinfo.start_phy =
-			    disc_resp->sdr_attached_phy_identifier;
-			phyinfo.end_phy =
-			    disc_resp->sdr_attached_phy_identifier;
-			if ((port_vtx = sas_create_vertex(mod, TOPO_VTX_PORT,
-			    ntohll(disc_resp->sdr_attached_sas_addr),
-			    &phyinfo)) == NULL) {
-				topo_vertex_destroy(mod, ex_pt_vtx);
-				ret = -1;
-				goto done;
-			}
-
-			tn = topo_vertex_node(port_vtx);
-			if (topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_LOCAL_ADDR, TOPO_PROP_IMMUTABLE,
-			    ntohll(disc_resp->sdr_attached_sas_addr), &err)
-			    != 0 ||
-			    topo_prop_set_uint64(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_ATTACH_ADDR, TOPO_PROP_IMMUTABLE,
-			    ntohll(disc_resp->sdr_sas_addr), &err) != 0 ||
-			    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_TYPE, TOPO_PROP_IMMUTABLE,
-			    TOPO_SASPORT_TYPE_TARGET, &err) != 0 ||
-			    topo_prop_set_string(tn, TOPO_PGROUP_SASPORT,
-			    TOPO_PROP_SASPORT_ANAME, TOPO_PROP_IMMUTABLE, "TBD",
-			    &err) != 0) {
-				topo_mod_dprintf(mod, "Failed to set props on "
-				    "%s=%" PRIx64 " (%s)", nodename, nodeinst,
-				    topo_strerror(err));
-				ret = -1;
-				goto done;
-			}
-
-			if (topo_edge_new(mod, ex_pt_vtx, port_vtx) != 0) {
-				topo_vertex_destroy(mod, ex_pt_vtx);
-				topo_vertex_destroy(mod, port_vtx);
-				ret = -1;
-				goto done;
-			}
-
-			/* This is a target device. */
-			if ((tgt_vtx = sas_create_vertex(mod, TOPO_VTX_TARGET,
-			    ntohll(disc_resp->sdr_attached_device_name),
-			    &phyinfo)) == NULL) {
-				topo_vertex_destroy(mod, ex_pt_vtx);
-				topo_vertex_destroy(mod, port_vtx);
-				ret = -1;
-				goto done;
-			}
-
-			if (topo_edge_new(mod, port_vtx, tgt_vtx) != 0) {
-				topo_vertex_destroy(mod, ex_pt_vtx);
-				topo_vertex_destroy(mod, port_vtx);
-				topo_vertex_destroy(mod, tgt_vtx);
-				ret = -1;
-				goto done;
-			}
-
-			tn = topo_vertex_node(tgt_vtx);
-
-		/*
-		 * This phy is for another 'complicated' device like an expander
-		 * or an HBA. This phy may be in a wide port configuration.
-		 *
-		 * To discover wide ports we allow the phy discovery loop to
-		 * continue to run. When this block first encounters a possibly
-		 * wide port it sets the start phy to the current phy, and it is
-		 * not modified again.
-		 *
-		 * Each time this block finds the same attached SAS address we
-		 * update the end phy identifier to be the current phy.
-		 *
-		 * Once the phy discovery loop finds a new attached SAS address
-		 * we know that the (possibly) wide port is done being
-		 * discovered and it should be 'committed.'
-		 */
-		} else if (disc_resp->sdr_attached_device_type
-		    == SMP_DEV_EXPANDER ||
-		    (disc_resp->sdr_attached_ssp_initiator ||
-		    disc_resp->sdr_attached_stp_initiator ||
-		    disc_resp->sdr_attached_smp_initiator)) {
-			/*
-			 * The current phy cannot be part of a wide
-			 * port, so the previous wide port discovery
-			 * effort must be committed.
-			 */
-			if (disc_resp->sdr_attached_sas_addr
-			    != wide_port_att_wwn && wide_port_discovery) {
-				wide_port_discovery = B_FALSE;
-				if (sas_wide_port_create(mod, smp_path,
-				    &wide_port_phys,
-				    htonll(wide_port_att_wwn),
-				    expd_addr) != 0) {
-					goto done;
-				}
-			}
-
-			if (!wide_port_discovery) {
-				/* New wide port discovery run. */
-				wide_port_discovery = B_TRUE;
-				wide_port_phys.start_phy =
-				    disc_resp->sdr_phy_identifier;
-				wide_port_att_wwn =
-				    disc_resp->sdr_attached_sas_addr;
-			}
-
-			wide_port_phys.end_phy =
-			    disc_resp->sdr_phy_identifier;
-		}
+		smp_action_free(prev_axn);
+		prev_axn = axn;
+		prev_disc_resp = disc_resp;
 	}
 
 done:
+	smp_action_free(prev_axn);
+	smp_action_free(axn);
+
 	if (tgt != NULL)
 		smp_close(tgt);
 	topo_mod_free(mod, tdef, sizeof (smp_target_def_t));
@@ -1242,7 +1248,7 @@ sas_connect_hba(topo_hdl_t *hdl, topo_edge_t *edge, boolean_t last, void* arg)
 	int ret = TOPO_WALK_NEXT;
 	topo_list_t *vtx_list;
 
-	mod = ((sas_topo_iter_t *) arg)->sas_mod;
+	mod = ((sas_topo_iter_t *)arg)->sas_mod;
 	node = topo_vertex_node(edge->tve_vertex);
 	hba_port = topo_node_getspecific(node);
 	if ((vtx_list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
@@ -1312,8 +1318,8 @@ sas_connect_hba(topo_hdl_t *hdl, topo_edge_t *edge, boolean_t last, void* arg)
 		}
 		expd_port = topo_node_getspecific(topo_vertex_node(expd_vtx));
 		if (expd_port == NULL) {
-		    ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
-		    goto out;
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			goto out;
 		}
 		expd_port->sp_has_hba_connection = B_TRUE;
 	}
@@ -1349,7 +1355,7 @@ sas_expd_interconnect(topo_hdl_t *hdl, topo_vertex_t *vtx,
 	if ((list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
 		return (topo_mod_seterrno(mod, EMOD_NOMEM));
 	}
- 	if ((port = topo_node_getspecific(node)) == NULL) {
+	if ((port = topo_node_getspecific(node)) == NULL) {
 		topo_mod_free(mod, list, sizeof (topo_list_t));
 		return (topo_mod_seterrno(mod, EMOD_UNKNOWN));
 	}
@@ -1424,8 +1430,8 @@ sas_connect_expd(topo_hdl_t *hdl, topo_vertex_t *vtx, sas_topo_iter_t *iter)
 
 	if ((disc_expd = topo_node_getspecific(topo_vertex_node(expd_vtx))) ==
 	    NULL) {
-	    ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
-	    goto out;
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		goto out;
 	}
 	/*
 	 * XXX This assumes only one of the expanders is connected to an HBA.
@@ -1469,7 +1475,7 @@ sas_vtx_final_pass(topo_hdl_t *hdl, topo_vertex_t *vtx, boolean_t last,
 
 	node = topo_vertex_node(vtx);
 	if ((port = topo_node_getspecific(node)) == NULL) {
-	    return (topo_mod_seterrno(iter->sas_mod, EMOD_UNKNOWN));
+		return (topo_mod_seterrno(iter->sas_mod, EMOD_UNKNOWN));
 	}
 
 	if (node != NULL && strcmp(topo_node_name(node), TOPO_VTX_PORT) == 0) {
@@ -1478,7 +1484,7 @@ sas_vtx_final_pass(topo_hdl_t *hdl, topo_vertex_t *vtx, boolean_t last,
 		 * port.
 		 */
 		if (port->sp_vtx->tvt_noutgoing == 0 && port->sp_is_expander) {
-		    return (sas_expd_interconnect(hdl, vtx, iter));
+			return (sas_expd_interconnect(hdl, vtx, iter));
 		}
 	}
 
@@ -1494,7 +1500,7 @@ sas_vtx_iter(topo_hdl_t *hdl, topo_vertex_t *vtx, boolean_t last, void *arg)
 
 	node = topo_vertex_node(vtx);
 	if ((port = topo_node_getspecific(node)) == NULL) {
-	    return (topo_mod_seterrno(iter->sas_mod, EMOD_UNKNOWN));
+		return (topo_mod_seterrno(iter->sas_mod, EMOD_UNKNOWN));
 	}
 
 	if (strcmp(topo_node_name(node), TOPO_VTX_INITIATOR) == 0) {
@@ -1758,7 +1764,7 @@ sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
 	const char *smp_path = NULL;
 	sas_port_t *hba_port;
 	topo_list_t *hba_list;
-       
+
 	if ((hba_list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
 		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto done;

@@ -232,6 +232,8 @@ topo_edge_new(topo_mod_t *mod, topo_vertex_t *from, topo_vertex_t *to)
 	    topo_node_name(to->tvt_node), topo_node_instance(to->tvt_node));
 
 	if ((tdg = find_digraph(mod)) == NULL) {
+		topo_mod_dprintf(mod, "Unable to find directed graph for "
+		    "module %s", mod->tm_name);
 		return (-1);
 	}
 	if ((e_from = topo_mod_zalloc(mod, sizeof (topo_edge_t))) == NULL ||

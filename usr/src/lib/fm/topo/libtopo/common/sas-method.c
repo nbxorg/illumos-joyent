@@ -101,7 +101,7 @@ scsi_mode_sense(topo_mod_t *mod, int fd, uint8_t pagecode, uint8_t subpagecode,
 	ucmd_buf.uscsi_timeout = 60;
 
 	if (ioctl(fd, USCSICMD, &ucmd_buf) < 0) {
-		topo_mod_dprintf(mod, "failed to read mode page (%s)\n",
+		topo_mod_dprintf(mod, "failed to read mode page (%s)",
 		    strerror(errno));
 		return (topo_mod_seterrno(mod, EMOD_UNKNOWN));
 	}
@@ -136,7 +136,7 @@ scsi_log_sense(topo_mod_t *mod, int fd, uint8_t pagecode, uchar_t *pagebuf,
 	ucmd_buf.uscsi_timeout = 60;
 
 	if (ioctl(fd, USCSICMD, &ucmd_buf) < 0) {
-		topo_mod_dprintf(mod, "failed to read log page (%s)\n",
+		topo_mod_dprintf(mod, "failed to read log page (%s)",
 		    strerror(errno));
 		return (topo_mod_seterrno(mod, EMOD_UNKNOWN));
 	}
@@ -213,7 +213,7 @@ sas_dev_fmri(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		topo_mod_dprintf(mod, "%s: Failed to allocate 'out' nvlist",
 		    __func__);
 		nvlist_free(nvl);
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto err;
 	}
 	*out = nvl;
@@ -229,7 +229,7 @@ err:
 
 /*
  * This routine is used to determine if the specified SAS topo node and HC
- * topo node represent the same physical disk.
+ * topo node represent the same physical device.
  */
 static boolean_t
 sas_node_matches_logical_disk(topo_mod_t *mod, tnode_t *sas_node,
@@ -243,7 +243,7 @@ sas_node_matches_logical_disk(topo_mod_t *mod, tnode_t *sas_node,
 	if (topo_prop_get_string(hc_node, TOPO_PGROUP_STORAGE,
 	    TOPO_STORAGE_LOGICAL_DISK, &ldisk, &err) != 0) {
 		topo_mod_dprintf(mod,
-		    "failed to get logical disk name (%s)", topo_strerror(err));
+		    "failed to get logical-disk name (%s)", topo_strerror(err));
 		goto done;
 	}
 
@@ -344,6 +344,7 @@ hc_iter_cb(topo_hdl_t *thp, tnode_t *node, void *arg)
 			topo_mod_dprintf(mod, "%s: failed to lookup %s "
 			    "property (%s)", __func__,
 			    TOPO_PGROUP_INITIATOR, topo_strerror(err));
+			(void) topo_mod_seterrno(mod, err);
 			goto done;
 		}
 
@@ -353,6 +354,7 @@ hc_iter_cb(topo_hdl_t *thp, tnode_t *node, void *arg)
 		    TOPO_IO_DEV, &hc_devfsn, &err) != 0) {
 			topo_mod_dprintf(mod, "%s: failed to get IO props"
 			    " (%s)", __func__, topo_strerror(err));
+			(void) topo_mod_seterrno(mod, err);
 			topo_hdl_strfree(thp, sas_devfsn);
 			goto done;
 		}
@@ -380,9 +382,10 @@ hc_iter_cb(topo_hdl_t *thp, tnode_t *node, void *arg)
 		 * by this point those topos have already been
 		 * ignored.
 		 */
-		(void) nvlist_lookup_string(fmri, FM_FMRI_MOD_NAME,
-		    &fmristr);
-		if (strcmp(fmristr, "mpt_sas") != 0) {
+		if ((err = nvlist_lookup_string(fmri, FM_FMRI_MOD_NAME,
+		    &fmristr)) != 0 ||
+		    (err = strcmp(fmristr, "mpt_sas") != 0)) {
+			(void) topo_mod_seterrno(mod, err);
 			goto done;
 		}
 
@@ -507,7 +510,10 @@ sas_hc_fmri(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		goto out;
 	}
 
-	(void) topo_mod_nvalloc(mod, &result, NV_UNIQUE_NAME);
+	if ((err = topo_mod_nvalloc(mod, &result, NV_UNIQUE_NAME)) != 0) {
+		ret = topo_mod_seterrno(mod, err);
+		goto out;
+	}
 	if (strcmp(topo_node_name(node), TOPO_VTX_INITIATOR) == 0) {
 		pname = TOPO_PROP_INITIATOR_FMRI;
 	} else {
@@ -599,7 +605,7 @@ sas_device_props_set(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		topo_mod_dprintf(mod, "failed to get fmri for %s=%" PRIx64
 		    " (%s)", topo_node_name(node), topo_node_instance(node),
 		    topo_strerror(err));
-		(void) topo_mod_seterrno(mod, err);
+		ret = topo_mod_seterrno(mod, err);
 		goto done;
 	}
 
@@ -607,7 +613,7 @@ sas_device_props_set(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		topo_mod_dprintf(mod, "fmri_str2nvl failed for %s=%" PRIx64
 		    " (%s)", topo_node_name(node), topo_node_instance(node),
 		    topo_strerror(err));
-		(void) topo_mod_seterrno(mod, err);
+		ret = topo_mod_seterrno(mod, err);
 		goto done;
 	}
 
@@ -618,7 +624,7 @@ sas_device_props_set(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		    topo_node_name(node), topo_node_instance(node),
 		    topo_strerror(err));
 		nvlist_free(pnvl);
-		(void) topo_mod_seterrno(mod, err);
+		ret = topo_mod_seterrno(mod, err);
 		goto done;
 	}
 
@@ -628,7 +634,8 @@ sas_device_props_set(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	 */
 	if (nvlist_add_string(pnvl, TOPO_PROP_VAL_NAME, pname) != 0) {
 		nvlist_free(pnvl);
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
+		goto done;
 	}
 	*out = pnvl;
 
@@ -1051,7 +1058,9 @@ sas_get_expander_phy_err_counter(topo_mod_t *mod, tnode_t *node, char *pname,
 	smp_report_phy_error_log_req_t *el_req;
 	smp_report_phy_error_log_resp_t *el_resp;
 
-	tdef = topo_mod_zalloc(mod, sizeof (smp_target_def_t));
+	if ((tdef = topo_mod_zalloc(mod, sizeof (smp_target_def_t))) == NULL) {
+		return (topo_mod_seterrno(mod, EMOD_NOMEM));
+	}
 	tdef->std_def = smp_path;
 
 	if ((tgt = smp_open(tdef)) == NULL) {
@@ -1137,7 +1146,7 @@ sas_get_adapter_phy_err_counter(topo_mod_t *mod, tnode_t *node, char *pname,
 	if ((handle = HBA_OpenAdapter(hba_name)) == 0) {
 		topo_mod_dprintf(mod, "%s: failed to open adapter: %s",
 		    __func__, hba_name);
-		(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 		goto err;
 	}
 	for (uint_t phy = 0; phy < nphys; phy++) {
@@ -1151,7 +1160,7 @@ sas_get_adapter_phy_err_counter(topo_mod_t *mod, tnode_t *node, char *pname,
 			topo_mod_dprintf(mod, "%s: failed to get HBA PHY stats "
 			    "for PORT %u PHY %u (ret=%u)", __func__, hba_port,
 			    phy, ret);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 		if (strcmp(pname, TOPO_PROP_SASPORT_INV_DWORD) == 0)
@@ -1222,10 +1231,10 @@ sas_get_target_phy_err_counter(topo_mod_t *mod, tnode_t *node, char *pname,
 
 		int fd;
 
-		if ((fd = open(diskpath, O_RDWR |O_NONBLOCK)) < 0) {
+		if ((fd = open(diskpath, O_RDWR|O_NONBLOCK)) < 0) {
 			topo_mod_dprintf(mod, "failed to open %s (%s)",
 			    diskpath, strerror(errno));
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 
@@ -1319,7 +1328,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	 * get the start and end PHY numbers.
 	 */
 	if (topo_node_resource(node, &fmri, &err) != 0) {
-		(void) topo_mod_seterrno(mod, err);
+		ret = topo_mod_seterrno(mod, err);
 		topo_mod_dprintf(mod, "%s: failed to get SAS FMRI", __func__);
 		goto err;
 	}
@@ -1329,7 +1338,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    nvlist_lookup_uint32(auth, FM_FMRI_SAS_END_PHY, &end_phy) != 0) {
 		topo_mod_dprintf(mod, "%s: malformed FMRI authority",
 		    __func__);
-		(void) topo_mod_seterrno(mod, EMOD_NVL_INVAL);
+		ret = topo_mod_seterrno(mod, EMOD_NVL_INVAL);
 		goto err;
 	}
 	nphys = (end_phy - start_phy) + 1;
@@ -1340,7 +1349,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	 */
 	if ((pvals = topo_mod_zalloc(mod, sizeof (uint64_t) * nphys)) ==
 	    NULL) {
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto err;
 	}
 
@@ -1353,7 +1362,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    TOPO_PROP_SASPORT_TYPE, &port_type, &err) != 0) {
 		topo_mod_dprintf(mod, "port node missing %s property",
 		    TOPO_PROP_SASPORT_TYPE);
-		(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 		goto err;
 	}
 	if (strcmp(port_type, TOPO_SASPORT_TYPE_INITIATOR) == 0) {
@@ -1361,7 +1370,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		    TOPO_PROP_SASPORT_APORT, &hba_port, &err) != 0) {
 			topo_mod_dprintf(mod, "initiator port node missing "
 			    "%s property",  TOPO_PROP_SASPORT_APORT);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 		if (sas_get_adapter_phy_err_counter(mod, node, pname, aname,
@@ -1388,7 +1397,7 @@ sas_get_phy_err_counter(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    != 0) {
 		topo_mod_dprintf(mod, "Failed to allocate 'out' nvlist");
 		nvlist_free(nvl);
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto err;
 	}
 	*out = nvl;
@@ -1435,7 +1444,7 @@ sas_get_adapter_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 	if ((handle = HBA_OpenAdapter(hba_name)) == 0) {
 		topo_mod_dprintf(mod, "%s: failed to open adapter: %s",
 		    __func__, hba_name);
-		(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 		goto err;
 	}
 	for (uint_t phy = 0; phy < nphys; phy++) {
@@ -1448,7 +1457,7 @@ sas_get_adapter_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 			topo_mod_dprintf(mod, "%s: failed to get HBA PHY attrs "
 			    "for PORT %u PHY %u (ret=%u)", __func__, hba_port,
 			    phy, ret);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 		if (strcmp(pname, TOPO_PROP_SASPORT_MAX_RATE) == 0)
@@ -1489,7 +1498,7 @@ sas_get_expander_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 	if ((tgt = smp_open(tdef)) == NULL) {
 		topo_mod_dprintf(mod, "%s: failed to open SMP target",
 		    __func__);
-		(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 		goto err;
 	}
 
@@ -1509,7 +1518,7 @@ sas_get_expander_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 
 		if (smp_exec(axn, tgt) != 0) {
 			topo_mod_dprintf(mod, "%s: smp_exec failed", __func__);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			smp_action_free(axn);
 			goto err;
 		}
@@ -1529,7 +1538,7 @@ sas_get_expander_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 		if (result != SMP_RES_FUNCTION_ACCEPTED) {
 			topo_mod_dprintf(mod, "%s: error in SMP response (%d)",
 			    __func__, result);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 		if (strcmp(pname, TOPO_PROP_SASPORT_MAX_RATE) == 0)
@@ -1604,7 +1613,7 @@ sas_get_target_phy_link_rate(topo_mod_t *mod, tnode_t *node, char *pname,
 		if ((fd = open(diskpath, O_RDWR |O_NONBLOCK)) < 0) {
 			topo_mod_dprintf(mod, "failed to open %s (%s)",
 			    diskpath, strerror(errno));
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 
@@ -1694,7 +1703,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	 * get the start and end PHY numbers.
 	 */
 	if (topo_node_resource(node, &fmri, &err) != 0) {
-		(void) topo_mod_seterrno(mod, err);
+		ret = topo_mod_seterrno(mod, err);
 		topo_mod_dprintf(mod, "%s: failed to get SAS FMRI", __func__);
 		goto err;
 	}
@@ -1704,7 +1713,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    nvlist_lookup_uint32(auth, FM_FMRI_SAS_END_PHY, &end_phy) != 0) {
 		topo_mod_dprintf(mod, "%s: malformed FMRI authority",
 		    __func__);
-		(void) topo_mod_seterrno(mod, EMOD_NVL_INVAL);
+		ret = topo_mod_seterrno(mod, EMOD_NVL_INVAL);
 		goto err;
 	}
 	nphys = (end_phy - start_phy) + 1;
@@ -1715,7 +1724,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	 */
 	if ((pvals = topo_mod_zalloc(mod, sizeof (uint32_t) * nphys)) ==
 	    NULL) {
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto err;
 	}
 
@@ -1727,7 +1736,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    TOPO_PROP_SASPORT_TYPE, &port_type, &err) != 0) {
 		topo_mod_dprintf(mod, "port node missing %s property",
 		    TOPO_PROP_SASPORT_TYPE);
-		(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+		ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 		goto err;
 	}
 	if (strcmp(port_type, TOPO_SASPORT_TYPE_INITIATOR) == 0) {
@@ -1735,7 +1744,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 		    TOPO_PROP_SASPORT_APORT, &hba_port, &err) != 0) {
 			topo_mod_dprintf(mod, "initiator port node missing "
 			    "%s property",  TOPO_PROP_SASPORT_APORT);
-			(void) topo_mod_seterrno(mod, EMOD_UNKNOWN);
+			ret = topo_mod_seterrno(mod, EMOD_UNKNOWN);
 			goto err;
 		}
 		if (sas_get_adapter_phy_link_rate(mod, node, pname, aname,
@@ -1765,7 +1774,7 @@ sas_get_phy_link_rate(topo_mod_t *mod, tnode_t *node, topo_version_t version,
 	    != 0) {
 		topo_mod_dprintf(mod, "Failed to allocate 'out' nvlist");
 		nvlist_free(nvl);
-		(void) topo_mod_seterrno(mod, EMOD_NOMEM);
+		ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 		goto err;
 	}
 	*out = nvl;

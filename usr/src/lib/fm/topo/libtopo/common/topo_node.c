@@ -196,6 +196,14 @@ topo_node_destroy(tnode_t *node)
 	}
 
 	/*
+	 * Nodes in a directed graph structure have no children, so the node
+	 * name is still intact. We must free it now.
+	 */
+	if (node->tn_vtx != NULL) {
+		topo_mod_strfree(mod, node->tn_name);
+	}
+
+	/*
 	 * Destroy all property data structures, free the node and release
 	 * the module that created it
 	 */

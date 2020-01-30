@@ -307,6 +307,131 @@ sas_node_matches_l0id(topo_mod_t *mod, tnode_t *sas_node, uint64_t wwn)
 	return (B_FALSE);
 }
 
+static boolean_t
+sas_initiator_match(topo_mod_t *mod, tnode_t *hc_node, tnode_t *sas_node)
+{
+	char *sas_devfsn = NULL;
+	char *hc_devfsn = NULL;
+	char *sas_devfsn_short;
+	char *fmristr = NULL;
+	boolean_t match = B_FALSE;
+	nvlist_t *fmri = NULL;
+	int err;
+
+	if (topo_prop_get_string(sas_node, TOPO_PGROUP_INITIATOR,
+	    TOPO_PROP_INITIATOR_DEVFS_PATH, &sas_devfsn, &err) != 0) {
+		topo_mod_dprintf(mod, "%s: failed to lookup %s "
+		    "property (%s)", __func__,
+		    TOPO_PGROUP_INITIATOR, topo_strerror(err));
+		(void) topo_mod_seterrno(mod, err);
+		goto done;
+	}
+
+	if (topo_prop_get_fmri(hc_node, TOPO_PGROUP_IO,
+	    TOPO_IO_MODULE, &fmri, &err) != 0 ||
+	    topo_prop_get_string(hc_node, TOPO_PGROUP_IO,
+	    TOPO_IO_DEV, &hc_devfsn, &err) != 0) {
+		topo_mod_dprintf(mod, "%s: failed to get IO props"
+		    " (%s)", __func__, topo_strerror(err));
+		(void) topo_mod_seterrno(mod, err);
+		topo_mod_strfree(mod, sas_devfsn);
+		goto done;
+	}
+
+	/*
+	 * Match sas and hc topo nodes based on the discovered
+	 * OS device names.
+	 *
+	 * The libsmhbaapi reported device name includes the leading
+	 * '/devices' string. The hc device name doesn't include this,
+	 * so we advance the pointer a bit to make the comparison.
+	 */
+	sas_devfsn_short = sas_devfsn + strlen("/devices");
+	if (strcmp(sas_devfsn_short, hc_devfsn) != 0) {
+		topo_mod_strfree(mod, sas_devfsn);
+		topo_mod_strfree(mod, hc_devfsn);
+		goto done;
+	}
+	topo_mod_strfree(mod, sas_devfsn);
+	topo_mod_strfree(mod, hc_devfsn);
+
+	/*
+	 * We expect initiators to be using the mpt_sas driver.
+	 * This won't work for non-mpt_sas topologies, but
+	 * by this point those topos have already been
+	 * ignored.
+	 */
+	if ((err = nvlist_lookup_string(fmri, FM_FMRI_MOD_NAME,
+	    &fmristr)) != 0 ||
+	    (err = strcmp(fmristr, "mpt_sas") != 0)) {
+		(void) topo_mod_seterrno(mod, err);
+		goto done;
+	}
+
+	match = B_TRUE;
+done:
+	return (match);
+}
+
+static boolean_t
+sas_target_match(topo_mod_t *mod, tnode_t *hc_node, tnode_t *sas_node)
+{
+	uint_t nelem;
+	uint64_t wwn;
+	char **ids;
+	int err;
+	boolean_t match = B_FALSE;
+
+	/*
+	 * Target port l0ids will be available when SES enumeration
+	 * works properly. During SAS device discovery using SMP we
+	 * retrieve a couple different WWNs for each device:
+	 * - the target port WWN (the 'port' node's WWN)
+	 * - the target device WWN (the 'target' node's WWN)
+	 *
+	 * SES will have the match for the target port WWN. If we cannot
+	 * find a target port WWN that means we don't have SES and we
+	 * should attempt to instead match against this node's WWN
+	 * against the 'logical-disk' name.
+	 */
+	if (topo_prop_get_string_array(hc_node, TOPO_PGROUP_STORAGE,
+	    TOPO_STORAGE_TARGET_PORT_L0IDS, &ids, &nelem, &err) != 0) {
+		if (err != ETOPO_PROP_NOENT) {
+			/*
+			 * This prop will not be present in systems
+			 * without SES.
+			 */
+			goto done;
+		}
+		if (sas_node_matches_logical_disk(
+		    mod, sas_node, hc_node)) {
+			match = B_TRUE;
+		}
+	} else {
+		/*
+		 * Go through all of the ports attached to this target
+		 * device. If any ports match any of the l0ids, then we
+		 * have found an HC scheme match for this SAS scheme
+		 * target.
+		 */
+		for (uint_t i = 0; i < nelem; i++) {
+			if (scsi_wwnstr_to_wwn(ids[i], &wwn) != 0) {
+				topo_mod_dprintf(mod,
+				    "scsi_wwnstr_to_wwn failed for %s", ids[i]);
+				topo_mod_strfreev(mod, ids, nelem);
+				goto done;
+			}
+			if (sas_node_matches_l0id(mod, sas_node, wwn)) {
+				match = B_TRUE;
+			}
+		}
+		topo_mod_strfreev(mod, ids, nelem);
+	}
+
+done:
+	return (match);
+}
+
 typedef struct sas_topo_cbarg {
 	topo_mod_t *st_mod;
 	tnode_t *st_node;
@@ -323,7 +448,7 @@ typedef struct sas_topo_cbarg {
  * number, device manufacturer, etc. with sas nodes.
  */
 static int
-hc_iter_cb(topo_hdl_t *thp, tnode_t *node, void *arg)
+hc_iter_cb(topo_hdl_t *thp, tnode_t *hc_node, void *arg)
 {
 	sas_topo_cbarg_t *cbarg = (sas_topo_cbarg_t *)arg;
 	tnode_t *sas_node = cbarg->st_node;
@@ -333,116 +458,15 @@ hc_iter_cb(topo_hdl_t *thp, tnode_t *node, void *arg)
 	tnode_t *targ_node = NULL;
 	topo_mod_t *mod = cbarg->st_mod;
 
-	if (strcmp(topo_node_name(node), PCIEX_FUNCTION) == 0 &&
-	    strcmp(topo_node_name(sas_node), TOPO_VTX_INITIATOR) == 0) {
-		char *sas_devfsn = NULL;
-		char *hc_devfsn = NULL;
-		char *sas_devfsn_short;
+	if (strcmp(topo_node_name(hc_node), PCIEX_FUNCTION) == 0 &&
+	    strcmp(topo_node_name(sas_node), TOPO_VTX_INITIATOR) == 0 &&
+	    sas_initiator_match(mod, hc_node, sas_node)) {
+		targ_node = hc_node;
 
-		if (topo_prop_get_string(sas_node, TOPO_PGROUP_INITIATOR,
-		    TOPO_PROP_INITIATOR_DEVFS_PATH, &sas_devfsn, &err) != 0) {
-			topo_mod_dprintf(mod, "%s: failed to lookup %s "
-			    "property (%s)", __func__,
-			    TOPO_PGROUP_INITIATOR, topo_strerror(err));
-			(void) topo_mod_seterrno(mod, err);
-			goto done;
-		}
-
-		if (topo_prop_get_fmri(node, TOPO_PGROUP_IO,
-		    TOPO_IO_MODULE, &fmri, &err) != 0 ||
-		    topo_prop_get_string(node, TOPO_PGROUP_IO,
-		    TOPO_IO_DEV, &hc_devfsn, &err) != 0) {
-			topo_mod_dprintf(mod, "%s: failed to get IO props"
-			    " (%s)", __func__, topo_strerror(err));
-			(void) topo_mod_seterrno(mod, err);
-			topo_hdl_strfree(thp, sas_devfsn);
-			goto done;
-		}
-
-		/*
-		 * Match sas and hc topo nodes based on the discovered
-		 * OS device names.
-		 *
-		 * The libsmhbaapi reported device name includes the leading
-		 * '/devices' string. The hc device name doesn't include this,
-		 * so we advance the pointer a bit to make the comparison.
-		 */
-		sas_devfsn_short = sas_devfsn + strlen("/devices");
-		if (strcmp(sas_devfsn_short, hc_devfsn) != 0) {
-			topo_hdl_strfree(thp, sas_devfsn);
-			topo_hdl_strfree(thp, hc_devfsn);
-			goto done;
-		}
-		topo_hdl_strfree(thp, sas_devfsn);
-		topo_hdl_strfree(thp, hc_devfsn);
-
-		/*
-		 * We expect initiators to be using the mpt_sas driver.
-		 * This won't work for non-mpt_sas topologies, but
-		 * by this point those topos have already been
-		 * ignored.
-		 */
-		if ((err = nvlist_lookup_string(fmri, FM_FMRI_MOD_NAME,
-		    &fmristr)) != 0 ||
-		    (err = strcmp(fmristr, "mpt_sas") != 0)) {
-			(void) topo_mod_seterrno(mod, err);
-			goto done;
-		}
-
-		targ_node = node;
-
-	} else if (strcmp(topo_node_name(node), DISK) == 0 &&
-	    strcmp(topo_node_name(sas_node), TOPO_VTX_TARGET) == 0) {
-		uint_t nelem;
-		uint64_t wwn;
-		char **ids;
-
-		/*
-		 * Target port l0ids will be available when SES enumeration
-		 * works properly. During SAS device discovery using SMP we
-		 * retrieve a couple different WWNs for each device:
-		 * - the target port WWN (the 'port' node's WWN)
-		 * - the target device WWN (the 'target' node's WWN)
-		 *
-		 * SES will have the match for the target port WWN. If we cannot
-		 * find a target port WWN that means we don't have SES and we
-		 * should attempt to instead match against this node's WWN
-		 * against the 'logical-disk' name.
-		 */
-		if (topo_prop_get_string_array(node, TOPO_PGROUP_STORAGE,
-		    TOPO_STORAGE_TARGET_PORT_L0IDS, &ids, &nelem, &err) != 0) {
-			if (err != ETOPO_PROP_NOENT) {
-				/*
-				 * This prop will not be present in systems
-				 * without SES.
-				 */
-				goto done;
-			}
-			if (sas_node_matches_logical_disk(
-			    mod, sas_node, node)) {
-				targ_node = node;
-			}
-		} else {
-			/*
-			 * Go through all of the ports attached to this target
-			 * device. If any ports match any of the l0ids, then we
-			 * have found an HC scheme match for this SAS scheme
-			 * target.
-			 */
-			for (uint_t i = 0; i < nelem; i++) {
-				if (scsi_wwnstr_to_wwn(ids[i], &wwn) != 0) {
-					topo_mod_dprintf(mod,
-					    "scsi_wwnstr_to_wwn failed for %s",
-					    ids[i]);
-					topo_hdl_strfreev(thp, ids, nelem);
-					goto done;
-				}
-				if (sas_node_matches_l0id(mod, sas_node, wwn)) {
-					targ_node = node;
-				}
-			}
-			topo_hdl_strfreev(thp, ids, nelem);
-		}
+	} else if (strcmp(topo_node_name(hc_node), DISK) == 0 &&
+	    strcmp(topo_node_name(sas_node), TOPO_VTX_TARGET) == 0 &&
+	    sas_target_match(mod, hc_node, sas_node)) {
+		targ_node = hc_node;
 	}
 
 	if (targ_node == NULL) {

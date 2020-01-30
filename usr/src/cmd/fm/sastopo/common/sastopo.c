@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- * Copyright 2019 Joyent, Inc.
+ * Copyright 2020 Joyent, Inc.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -607,6 +607,8 @@ vertex_cb(topo_hdl_t *thp, topo_vertex_t *vtx, boolean_t last_vtx,
 		topo_list_append(&cbarg->ini_list, sasvtx);
 	} else if (strcmp(topo_node_name(tn), TOPO_VTX_TARGET) == 0) {
 		topo_list_append(&cbarg->tgt_list, sasvtx);
+	} else {
+		topo_hdl_free(thp, sasvtx, sizeof (struct sastopo_vertex));
 	}
 	return (TOPO_WALK_NEXT);
 }
@@ -826,6 +828,9 @@ main(int argc, char *argv[])
 			topo_hdl_free(thp, paths, np * sizeof (topo_path_t *));
 		}
 	}
+	status = EXIT_SUCCESS;
+
+out:
 	ini = topo_list_next(&cbarg.ini_list);
 	while (ini != NULL) {
 		struct sastopo_vertex *tmp = ini;
@@ -840,9 +845,7 @@ main(int argc, char *argv[])
 		tgt = topo_list_next(tgt);
 		topo_hdl_free(thp, tmp, sizeof (struct sastopo_vertex));
 	}
-	status = EXIT_SUCCESS;
 
-out:
 	if (thp != NULL)  {
 		topo_hdl_strfree(thp, snapuuid);
 		topo_snap_release(thp);

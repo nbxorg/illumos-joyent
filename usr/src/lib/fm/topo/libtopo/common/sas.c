@@ -219,9 +219,6 @@ static const topo_method_t sas_initiator_methods[] = {
 	{ TOPO_METH_SAS_DEV_PROP, TOPO_METH_SAS_DEV_PROP_DESC,
 	    TOPO_METH_SAS_DEV_PROP_VERSION, TOPO_STABILITY_INTERNAL,
 	    sas_device_props_set },
-	{ TOPO_METH_SAS2DEV, TOPO_METH_SAS2DEV_DESC,
-	    TOPO_METH_SAS2DEV_VERSION, TOPO_STABILITY_INTERNAL,
-	    sas_dev_fmri },
 	{ NULL }
 };
 
@@ -239,9 +236,6 @@ static const topo_method_t sas_target_methods[] = {
 	{ TOPO_METH_SAS_DEV_PROP, TOPO_METH_SAS_DEV_PROP_DESC,
 	    TOPO_METH_SAS_DEV_PROP_VERSION, TOPO_STABILITY_INTERNAL,
 	    sas_device_props_set },
-	{ TOPO_METH_SAS2DEV, TOPO_METH_SAS2DEV_DESC,
-	    TOPO_METH_SAS2DEV_VERSION, TOPO_STABILITY_INTERNAL,
-	    sas_dev_fmri },
 	{ NULL }
 };
 
@@ -1104,9 +1098,10 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 	expd_addr = ntohll(report_resp->srgr_enclosure_logical_identifier);
 	smp_action_free(axn);
 
-	/* XXX start_phy = 0; end_phy = num_phys - 1; ? */
+	/* Currently phyinfo is not used for TOPO_VTX_EXPANDER vertices. */
 	phyinfo.start_phy = 0;
-	phyinfo.end_phy = (phyinfo.start_phy + num_phys) - (num_phys - 1);
+	phyinfo.end_phy = num_phys - 1;
+
 	if ((expd_vtx = sas_create_vertex(mod, TOPO_VTX_EXPANDER, expd_addr,
 	    &phyinfo)) == NULL) {
 		ret = -1;
@@ -1182,7 +1177,7 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 	}
 
 	if (num_phys > 0) {
-		prev_disc_resp =  sas_smp_exec(mod, tgt, SMP_FUNC_DISCOVER, 0,
+		prev_disc_resp = sas_smp_exec(mod, tgt, SMP_FUNC_DISCOVER, 0,
 		    &prev_axn);
 		if (prev_disc_resp == NULL) {
 			topo_mod_dprintf(mod, "SMP DISCOVER failed for phy %u "
@@ -1190,7 +1185,9 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 			goto done;
 		}
 
+		prev_addr = prev_disc_resp->sdr_attached_sas_addr;
 		phyinfo.start_phy = 0;
+		phyinfo.end_phy = 0;
 	}
 
 	for (i = 1; i < num_phys; i++) {
@@ -1204,7 +1201,7 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 			goto done;
 		}
 
-		addr = ntohll(disc_resp->sdr_sas_addr);
+		addr = ntohll(disc_resp->sdr_attached_sas_addr);
 		if (addr == prev_addr) {
 			phyinfo.end_phy = i;
 		} else {
@@ -1217,6 +1214,7 @@ sas_expander_discover(topo_mod_t *mod, const char *smp_path)
 		smp_action_free(prev_axn);
 		prev_axn = axn;
 		prev_disc_resp = disc_resp;
+		prev_addr = addr;
 	}
 
 done:
@@ -1749,6 +1747,7 @@ static int
 sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
     topo_instance_t min, topo_instance_t max, void *notused1, void *notused2)
 {
+	/* XXX These method registrations are leaked. */
 	if (topo_method_register(mod, rnode, sas_root_methods) != 0) {
 		topo_mod_dprintf(mod, "failed to register scheme methods");
 		/* errno set */
@@ -1762,7 +1761,6 @@ sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
 
 	di_node_t root, smp;
 	const char *smp_path = NULL;
-	sas_port_t *hba_port;
 	topo_list_t *hba_list;
 
 	if ((hba_list = topo_mod_zalloc(mod, sizeof (topo_list_t))) == NULL) {
@@ -1836,7 +1834,7 @@ sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
 		size_t path_len;
 
 		smp_path = di_devfs_path(smp);
-		path_len = strlen(smp_path) + strlen("/devices:smp");
+		path_len = strlen(smp_path) + strlen("/devices:smp") + 1;
 		if ((full_smp_path = topo_mod_zalloc(mod, path_len)) == NULL) {
 			ret = topo_mod_seterrno(mod, EMOD_NOMEM);
 			goto done;
@@ -1851,7 +1849,6 @@ sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
 		topo_mod_free(mod, full_smp_path, path_len);
 	}
 
-	/* XXX continue here */
 	sas_topo_iter_t iter;
 	iter.sas_mod = mod;
 	if (topo_vertex_iter(mod->tm_hdl,
@@ -1874,13 +1871,12 @@ sas_enum(topo_mod_t *mod, tnode_t *rnode, const char *name,
 
 	ret = 0;
 done:
-	hba_port = topo_list_next(hba_list);
-	while (hba_port != NULL) {
-		sas_port_t *tmp = hba_port;
-
-		hba_port = topo_list_next(hba_port);
-		topo_mod_free(mod, tmp, sizeof (sas_port_t));
-	}
+	/*
+	 * Free the topo_list_t since we're done doing discovery. However we
+	 * do not free the members of the hba_list since they are pointed to by
+	 * each HBA port' tn_priv member. These will be freed during
+	 * sas_release.
+	 */
 	topo_mod_free(mod, hba_list, sizeof (topo_list_t));
 
 	return (ret);
@@ -1889,5 +1885,13 @@ done:
 static void
 sas_release(topo_mod_t *mod, tnode_t *node)
 {
+	sas_port_t *info = NULL;
+
+	info = topo_node_getspecific(node);
+
+	if (info != NULL) {
+		topo_mod_free(mod, info, sizeof (sas_port_t));
+	}
+
 	topo_method_unregister_all(mod, node);
 }

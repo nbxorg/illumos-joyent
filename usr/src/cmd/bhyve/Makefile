@@ -28,8 +28,8 @@ clean	:=	TARGET = clean
 clobber	:=	TARGET = clobber
 lint	:=	TARGET = lint
 
-SRCS =	acpi.c			\
-	atkbdc.c		\
+SRCS =	atkbdc.c		\
+	acpi.c			\
 	bhyvegc.c		\
 	bhyverun.c		\
 	block_if.c		\
@@ -44,6 +44,7 @@ SRCS =	acpi.c			\
 	mem.c			\
 	mevent.c		\
 	mptbl.c			\
+	net_utils.c		\
 	pci_ahci.c		\
 	pci_e82545.c		\
 	pci_emul.c		\
@@ -85,6 +86,11 @@ SRCS =	acpi.c			\
 	#ctl_util.c		\
 	#ctl_scsi_all.c		\
 	#pci_virtio_scsi.c	\
+
+# XXX bhyve upstream merge
+	#audio.c		\
+	#hda_codec.c		\
+	#pci_hda.c		\
 
 
 OBJS = $(SRCS:.c=.o)

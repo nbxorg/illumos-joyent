@@ -2163,7 +2163,7 @@ svm_vmrun(void *arg, int vcpu, register_t rip, pmap_t pmap,
 		VCPU_CTR1(vm, vcpu, "Resume execution at %#lx", state->rip);
 		svm_dr_enter_guest(gctx);
 #ifdef __FreeBSD__
-		svm_launch(vmcb_pa, gctx, &__pcpu[curcpu]);
+		svm_launch(vmcb_pa, gctx, get_pcpu());
 #else
 		svm_launch(vmcb_pa, gctx, CPU);
 #endif
@@ -2422,25 +2422,24 @@ svm_restorectx(void *arg, int vcpu)
 #endif /* __FreeBSD__ */
 
 struct vmm_ops vmm_ops_amd = {
-	svm_init,
-	svm_cleanup,
-	svm_restore,
-	svm_vminit,
-	svm_vmrun,
-	svm_vmcleanup,
-	svm_getreg,
-	svm_setreg,
-	vmcb_getdesc,
-	vmcb_setdesc,
-	svm_getcap,
-	svm_setcap,
-	svm_npt_alloc,
-	svm_npt_free,
-	svm_vlapic_init,
-	svm_vlapic_cleanup,
-
+	.init		= svm_init,
+	.cleanup	= svm_cleanup,
+	.resume		= svm_restore,
+	.vminit		= svm_vminit,
+	.vmrun		= svm_vmrun,
+	.vmcleanup	= svm_vmcleanup,
+	.vmgetreg	= svm_getreg,
+	.vmsetreg	= svm_setreg,
+	.vmgetdesc	= vmcb_getdesc,
+	.vmsetdesc	= vmcb_setdesc,
+	.vmgetcap	= svm_getcap,
+	.vmsetcap	= svm_setcap,
+	.vmspace_alloc	= svm_npt_alloc,
+	.vmspace_free	= svm_npt_free,
+	.vlapic_init	= svm_vlapic_init,
+	.vlapic_cleanup	= svm_vlapic_cleanup,
 #ifndef __FreeBSD__
-	svm_savectx,
-	svm_restorectx,
+	.vmsavectx	= svm_savectx,
+	.vmrestorectx	= svm_restorectx,
 #endif
 };
